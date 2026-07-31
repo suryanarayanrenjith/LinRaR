@@ -43,6 +43,8 @@ CANDIDATES: dict[str, tuple[str, ...]] = {
     "rar": ("rar",),
     "zip": ("zip",),
     "unzip": ("unzip",),
+    "squashfs": ("mksquashfs",),
+    "keyring": ("secret-tool",),
 }
 
 

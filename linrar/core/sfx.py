@@ -29,6 +29,7 @@ from dataclasses import dataclass
 from typing import Callable, Optional
 
 from .backends.base import TaskContext
+from . import tools
 from .models import OperationError
 from .process import ProcessRunner
 
@@ -568,7 +569,8 @@ def build_sfx_appimage(
 
     if not os.path.isfile(archive_path):
         raise OperationError(f"The archive does not exist:\n{archive_path}")
-    if not shutil.which("mksquashfs"):
+    mksquashfs = tools.find("squashfs")
+    if not mksquashfs:
         raise OperationError(
             "'mksquashfs' is required to build an AppImage but was not "
             "found.\n\nInstall it, for example:\n"
@@ -594,7 +596,7 @@ def build_sfx_appimage(
         ctx.on_total(35)
 
         # -- bundled extractor, so the recipient needs nothing installed --
-        unrar = shutil.which("unrar")
+        unrar = tools.find("unrar")
         if unrar:
             try:
                 shutil.copy2(unrar, os.path.join(bin_dir, "unrar"))
@@ -647,7 +649,7 @@ def build_sfx_appimage(
         squashfs = os.path.join(workdir, "payload.squashfs")
         runner = ProcessRunner(
             [
-                "mksquashfs", appdir, squashfs,
+                mksquashfs, appdir, squashfs,
                 "-root-owned", "-noappend", "-no-progress",
                 # gzip keeps the image compatible with every AppImage runtime.
                 "-comp", "gzip",
@@ -689,7 +691,7 @@ def build_sfx_appimage(
 
 def appimage_ready() -> tuple[bool, str]:
     """Report whether an AppImage can be built right now, and why not."""
-    if not shutil.which("mksquashfs"):
+    if not tools.find("squashfs"):
         return False, (
             "'mksquashfs' is not installed (package 'squashfs-tools')."
         )

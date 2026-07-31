@@ -18,14 +18,18 @@ jobs:
 
       - name: Install the tools LinRAR drives
         run: |
-          sudo add-apt-repository -y multiverse
           sudo apt-get update
-          # rar is shareware and lives in multiverse; without it the tests that
-          # create RAR archives are skipped rather than failed.
-          sudo apt-get install -y unrar p7zip-full zip squashfs-tools \
-                                  libsecret-tools rar || true
+          # Qt needs these to start at all, even offscreen.
           sudo apt-get install -y libxcb-cursor0 libxcb-xinerama0 libgl1 \
                                   libegl1 libxkbcommon-x11-0
+          sudo apt-get install -y unrar p7zip-full zip squashfs-tools \
+                                  libsecret-tools
+          # rar is shareware and lives in multiverse, so it is installed on its
+          # own: a failure here must not take the packages above with it, and
+          # run_all.py skips the files that need it rather than failing them.
+          sudo add-apt-repository -y multiverse || true
+          sudo apt-get update || true
+          sudo apt-get install -y rar || echo "rar unavailable; those files will be skipped"
 
       - name: Install PyQt6
         run: pip install -r requirements.txt
@@ -40,15 +44,21 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install and uninstall for real
+      - name: Qt runtime libraries
         run: |
           sudo apt-get update
           sudo apt-get install -y libxcb-cursor0 libgl1 libegl1 \
-                                  libxkbcommon-x11-0 xvfb
+                                  libxkbcommon-x11-0
+
+      - name: Install, verify, uninstall
+        run: |
           ./install.sh --user --no-deps -y
           test -x "$HOME/.local/bin/linrar"
+          test -f "$HOME/.local/share/applications/linrar.desktop"
+          test -f "$HOME/.local/share/icons/hicolor/48x48/apps/linrar.png"
           QT_QPA_PLATFORM=offscreen "$HOME/.local/bin/linrar" --version
           QT_QPA_PLATFORM=offscreen "$HOME/.local/bin/linrar" --self-test
           ./uninstall.sh -y
           test ! -e "$HOME/.local/bin/linrar"
+          test ! -e "$HOME/.local/share/applications/linrar.desktop"
           test ! -d .venv

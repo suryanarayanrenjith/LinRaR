@@ -23,6 +23,20 @@ def check(name, cond, extra=""):
         FAIL += 1
         print(f"FAIL  {name}  {extra}")
 
+def _version(*argv):
+    try:
+        proc = subprocess.run(argv, capture_output=True, timeout=10)
+    except (OSError, subprocess.TimeoutExpired):
+        return "missing"
+    text = (proc.stdout or b"").decode("utf-8", "replace") or \
+           (proc.stderr or b"").decode("utf-8", "replace")
+    return next((l.strip() for l in text.splitlines() if l.strip()), "?")[:60]
+
+print("== tools")
+for label, argv in (("rar", ("rar", "-iver")), ("unrar", ("unrar",)),
+                    ("7z", ("7z", "i")), ("zip", ("zip", "-v"))):
+    print(f"  --  {label}: {_version(*argv)}")
+
 root = tempfile.mkdtemp(prefix="linrar-suite-")
 os.chdir(root)
 
@@ -51,7 +65,11 @@ rar.create([f"{src}/a.txt", f"{src}/sub"],
            CompressOptions(archive_path=arc, base_folder=src))
 info = rar.read_info(arc)
 names = sorted(e.name for e in info.entries)
-check("entries stored w/ paths", names == ["a.txt", "sub", "sub/deep.txt"], names)
+files = sorted(e.name for e in info.entries if not e.is_dir)
+# Whether a *directory* gets an entry of its own is the archiver's business and
+# differs between rar versions; LinRAR builds its folder tree from the member
+# paths either way.  What must hold is the files and their paths.
+check("entries stored w/ paths", files == ["a.txt", "sub/deep.txt"], names)
 check("no entry encrypted", not any(e.encrypted for e in info.entries))
 check("no decoy nest/a.txt swept in", "nest/a.txt" not in names)
 out = fresh("out-plain")
@@ -74,8 +92,15 @@ outdir = fresh("out-sfx")
 proc = subprocess.run([sfx, f"-d{outdir}"], capture_output=True, timeout=30,
                       stdin=subprocess.DEVNULL, cwd=outdir)
 text = proc.stdout.decode() + proc.stderr.decode()
-check("sfx runs w/o password prompt", "password" not in text.lower(), text[:200])
-check("sfx extracted file", os.path.isfile(f"{outdir}/a.txt"), text[:200])
+# The bug this pins down made a passwordless SFX demand a password.  Newer SFX
+# stubs print a help banner that merely mentions the word, so look for the
+# prompt itself rather than for "password" anywhere in the output.
+prompts = ("enter password", "password required", "incorrect password",
+           "wrong password", "password is incorrect")
+lowered = text.lower()
+check("sfx runs w/o password prompt",
+      not any(p in lowered for p in prompts), text[:300])
+check("sfx extracted file", os.path.isfile(f"{outdir}/a.txt"), text[:300])
 check("detect_format sees sfx as RAR", detect_format(sfx) in (ArchiveFormat.RAR4, ArchiveFormat.RAR5))
 
 # ---------------- RAR: password + header encryption --------------------
@@ -107,7 +132,8 @@ ep = f"{root}/ep.rar"
 rar.create([f"{src}/sub/deep.txt"], CompressOptions(
     archive_path=ep, base_folder=src, store_paths=False))
 info = rar.read_info(ep)
-check("no path stored", [e.name for e in info.entries] == ["deep.txt"],
+check("no path stored",
+      sorted(e.name for e in info.entries if not e.is_dir) == ["deep.txt"],
       [e.name for e in info.entries])
 
 # ---------------- RAR: rename folder w/ children ------------------------
@@ -117,7 +143,11 @@ rar.create([f"{src}/sub"], CompressOptions(archive_path=rn, base_folder=src))
 rar.rename_members(rn, [("sub", "renamed"), ("sub/deep.txt", "renamed/deep.txt")])
 info = rar.read_info(rn)
 names = sorted(e.name for e in info.entries)
-check("folder + child renamed", names == ["renamed", "renamed/deep.txt"], names)
+# Again: the folder entry itself may or may not be listed, but nothing may
+# still carry the old name and the child must have moved with it.
+check("folder + child renamed",
+      "renamed/deep.txt" in names and not any(n.startswith("sub") for n in names),
+      names)
 
 # ---------------- RAR: comment, lock, recovery record, test -------------
 print("== RAR misc write ops")
@@ -137,8 +167,10 @@ check("convert_to_sfx output exists", os.path.isfile(stub), stub)
 outdir2 = fresh("out-stub")
 proc = subprocess.run([stub, f"-d{outdir2}"], capture_output=True, timeout=30,
                       stdin=subprocess.DEVNULL, cwd=outdir2)
+stub_text = (proc.stdout.decode() + proc.stderr.decode()).lower()
 check("stub extracts w/o password",
-      "password" not in (proc.stdout.decode() + proc.stderr.decode()).lower())
+      not any(p in stub_text for p in prompts) and os.path.isfile(f"{outdir2}/a.txt"),
+      stub_text[:300])
 
 # ---------------- ZIP: create + update modes ----------------------------
 print("== ZIP")

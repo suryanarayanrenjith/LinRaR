@@ -57,6 +57,25 @@ def interpreter() -> str:
     return venv if os.path.exists(venv) else sys.executable
 
 
+def available(tool: str) -> bool:
+    """Is *tool* usable — asked the same way the application asks it.
+
+    LinRAR looks past PATH into the places distributions and manual installs
+    use, so the tests must agree with it or they would skip work that would
+    actually have run.
+    """
+    try:
+        sys.path.insert(0, ROOT)
+        from linrar.core import tools as tool_finder
+
+        kind = {"7z": "sevenzip", "mksquashfs": "squashfs"}.get(tool, tool)
+        if kind in tool_finder.CANDIDATES:
+            return bool(tool_finder.find(kind))
+    except Exception:
+        pass
+    return bool(shutil.which(tool))
+
+
 def files(patterns: list[str]) -> list[str]:
     known = [name for name in ORDER if os.path.exists(os.path.join(HERE, name))]
     extra = sorted(
@@ -85,8 +104,7 @@ def main(argv: list[str]) -> int:
     for name in selected:
         print(f"  {name:<24}", end="", flush=True)
         missing = [
-            tool for tool in REQUIRES.get(name, [])
-            if not shutil.which(tool)
+            tool for tool in REQUIRES.get(name, []) if not available(tool)
         ]
         if missing:
             skipped.append(name)
@@ -112,9 +130,19 @@ def main(argv: list[str]) -> int:
         else:
             broken.append(name)
             print(f"{RED}FAIL{OFF}  {summary or 'crashed'}  {DIM}{seconds:.1f}s{OFF}")
-            tail = (result.stdout + result.stderr).strip().splitlines()[-12:]
-            for line in tail:
-                print(f"        {DIM}{line}{OFF}")
+            output = (result.stdout + result.stderr).strip()
+            # The failed checks first — a tail alone hides them when the file
+            # keeps going, which is exactly when you need to see them.
+            failures = [
+                line for line in output.splitlines() if line.startswith("FAIL")
+            ]
+            for line in failures:
+                print(f"        {RED}{line}{OFF}")
+            tail = output.splitlines()[-25:]
+            if tail and (not failures or tail[-1] != failures[-1]):
+                print(f"        {DIM}--- last {len(tail)} lines ---{OFF}")
+                for line in tail:
+                    print(f"        {DIM}{line}{OFF}")
 
     elapsed = time.monotonic() - started
     print()

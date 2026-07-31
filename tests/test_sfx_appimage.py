@@ -1,9 +1,15 @@
-"""Build a self-extracting AppImage and actually run it."""
+"""Build a self-extracting AppImage and actually run it.
+
+Needs an AppImage *runtime* stub, which LinRAR takes from its cache, from
+`appimagetool`, or by harvesting any AppImage already on the machine.  A
+build server usually has none of the three and downloading one is not this
+test's job, so the whole file steps aside when there is nothing to build with.
+"""
 import os, subprocess, sys, tempfile
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from linrar.core.backends.rar import RarBackend
-from linrar.core.models import CompressOptions
+from linrar.core.models import CompressOptions, OperationError
 from linrar.core import sfx
 
 PASS = FAIL = 0
@@ -11,6 +17,13 @@ def check(name, cond, extra=""):
     global PASS, FAIL
     if cond: PASS += 1; print(f"  ok  {name}")
     else: FAIL += 1; print(f"FAIL  {name}  {extra}")
+
+try:
+    sfx.acquire_runtime(allow_download=False)
+except OperationError:
+    print("  --  no AppImage runtime available offline; skipping this file")
+    print("\n0 passed, 0 failed")
+    sys.exit(0)
 
 root = tempfile.mkdtemp(prefix="linrar-appimage-")
 src = os.path.join(root, "src"); os.makedirs(src)
