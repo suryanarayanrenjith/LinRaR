@@ -1,0 +1,54 @@
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  suite:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install the tools LinRAR drives
+        run: |
+          sudo add-apt-repository -y multiverse
+          sudo apt-get update
+          # rar is shareware and lives in multiverse; without it the tests that
+          # create RAR archives are skipped rather than failed.
+          sudo apt-get install -y unrar p7zip-full zip squashfs-tools \
+                                  libsecret-tools rar || true
+          sudo apt-get install -y libxcb-cursor0 libxcb-xinerama0 libgl1 \
+                                  libegl1 libxkbcommon-x11-0
+
+      - name: Install PyQt6
+        run: pip install -r requirements.txt
+
+      - name: Run the suite
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: python3 tests/run_all.py
+
+  install-script:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install and uninstall for real
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libxcb-cursor0 libgl1 libegl1 \
+                                  libxkbcommon-x11-0 xvfb
+          ./install.sh --user --no-deps -y
+          test -x "$HOME/.local/bin/linrar"
+          QT_QPA_PLATFORM=offscreen "$HOME/.local/bin/linrar" --version
+          QT_QPA_PLATFORM=offscreen "$HOME/.local/bin/linrar" --self-test
+          ./uninstall.sh -y
+          test ! -e "$HOME/.local/bin/linrar"
+          test ! -d .venv

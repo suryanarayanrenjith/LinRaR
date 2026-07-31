@@ -1,0 +1,41 @@
+# Reference copy of the desktop entry install.sh generates.
+#
+# The installed version has absolute paths filled in (Exec/TryExec point at the
+# launcher it writes to ~/.local/bin or /usr/local/bin) and is registered with
+# the desktop databases.  Run ./install.sh rather than copying this by hand.
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=LinRAR
+GenericName=Archive Manager
+Comment=Create and extract RAR, ZIP and 7z archives
+Exec=linrar %F
+TryExec=linrar
+Icon=linrar
+Terminal=false
+StartupNotify=true
+StartupWMClass=LinRAR
+Categories=Utility;Archiving;Compression;FileTools;
+MimeType=application/x-rar;application/vnd.rar;application/x-rar-compressed;application/zip;application/x-zip-compressed;application/x-7z-compressed;application/x-tar;application/gzip;application/x-gzip;application/x-bzip2;application/x-xz;application/x-compressed-tar;application/x-bzip-compressed-tar;application/x-xz-compressed-tar;application/x-cd-image;application/x-cab;application/x-lzma;application/zstd;
+Keywords=archive;rar;zip;7z;compress;extract;unpack;
+Actions=ExtractHere;ExtractTo;Compress;Test;
+
+[Desktop Action ExtractHere]
+Name=Extract here
+Icon=linrar
+Exec=linrar --extract-here %F
+
+[Desktop Action ExtractTo]
+Name=Extract to...
+Icon=linrar
+Exec=linrar --extract-to %F
+
+[Desktop Action Compress]
+Name=Add to archive...
+Icon=linrar
+Exec=linrar --add %F
+
+[Desktop Action Test]
+Name=Test archive
+Icon=linrar
+Exec=linrar --test %F

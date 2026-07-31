@@ -1,0 +1,40 @@
+# --- LinRAR ---------------------------------------------------------------
+# The virtual environment install.sh builds, and the record of what it put on
+# the system.  Both are per-machine; never commit them.
+.venv/
+venv/
+.install-manifest
+
+# --- Python ---------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+build/
+dist/
+*.egg-info/
+.eggs/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# --- editors and desktops -------------------------------------------------
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# --- scratch --------------------------------------------------------------
+# Archives and extraction output left behind by a manual test run.
+/tmp/
+*.log
+*.rar
+*.zip
+*.7z
+*.sfx
+*.AppImage
+!docs/**/*.png

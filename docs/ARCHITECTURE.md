@@ -1,0 +1,113 @@
+# How LinRAR works
+
+LinRAR is a front end. It never implements compression itself: it drives `rar`,
+`unrar` and `7z` as child processes, parses what they print, and puts a WinRAR
+interface on top. ZIP is the exception — reading and writing plain ZIP is done
+in-process with Python's `zipfile`.
+
+## Layout
+
+```
+linrar/               the application
+├── app.py            entry point, command line actions
+├── core/
+│   ├── process.py    terminal emulation for rar's \b-based progress output
+│   ├── backends/
+│   │   ├── rar.py    rar + unrar (the primary backend)
+│   │   ├── zip.py    in-process ZIP via zipfile
+│   │   └── sevenzip.py  7z for every other format
+│   ├── registry.py   content sniffing, format → backend
+│   ├── tools.py      finding rar/unrar/7z/zip wherever a distro puts them
+│   ├── elevation.py  pkexec / sudo / doas, with a held authorisation
+│   ├── packages.py   distribution and package-manager detection
+│   ├── settings.py   one INI file, with migration from older layouts
+│   ├── sfx.py        AppImage builder (runtime, AppRun, squashfs, concat)
+│   ├── convert.py    batch format conversion
+│   ├── profiles.py   saved compression profiles
+│   ├── passwords.py  keyring-backed password store
+│   ├── report.py     TXT / CSV / HTML listings
+│   ├── tasks.py      QThread workers with progress signals
+│   └── models.py     entries, options, errors
+└── ui/
+    ├── theme.py      the chrome as a Qt style sheet, light and dark
+    ├── icons.py      gradient 3D SVG icon set, one build per theme
+    ├── filelist.py   one model, five views, one selection
+    ├── foldertree.py the folder pane
+    ├── main_window.py
+    └── dialogs/      archive, extract, sfx, convert, customize, tools, …
+
+assets/               linrar.svg (the app icon) and a reference .desktop entry
+tests/                the suite plus run_all.py
+docs/                 this documentation
+install.sh            desktop wiring; uninstall.sh reverses it
+run.sh                run from the source tree without installing
+```
+
+## Things worth knowing
+
+**Progress parsing.** `rar` reports progress by rewriting the current terminal
+line with backspaces (`\b\b\b\b 42%`) and emits no newline until a file
+finishes, so a `readline()` loop looks frozen. `process.py` replays `\b`, `\r`
+and `\n` to reconstruct the line exactly as a terminal would render it. Because
+rar makes several passes over some files its raw percentage jumps backwards, so
+overall progress is derived from members completed and clamped monotonic.
+
+**Passwords** go to the child's **stdin**, never `-p<password>` on the command
+line, so they never appear in `/proc/<pid>/cmdline`. When no password is
+supplied, *read* commands get `-p-` so an encrypted archive fails fast instead
+of blocking on an invisible console prompt. *Write* commands must get no
+password switch at all: for `rar a`, `-p-` does not mean "no password" — it
+silently encrypts the archive with the literal password `-`. (p7zip and
+encrypted-ZIP creation are exceptions; those tools cannot read a password from
+a pipe, and the code says so.)
+
+**Overwrite prompts.** Rather than driving unrar's interactive console prompt,
+conflicts are detected up front and resolved in the GUI; the decision becomes a
+concrete `-o+` / `-o-` / `-or` flag plus a filtered member list.
+
+**Zip Slip.** ZIP members are resolved against the destination and refused if
+they escape it, so a crafted archive cannot write outside the target folder.
+
+**Administrator rights.** `elevation.py` finds pkexec, sudo or doas,
+authenticates **once** — the password goes to the helper's stdin and is never
+stored — and a keep-alive thread refreshes sudo's own timestamp so the rest of
+the session runs without asking again. Extracting into a protected folder
+unpacks to a staging folder and then moves the result into place as root, so
+the archive tool never runs privileged.
+
+**AppImage SFX.** A type 2 AppImage is a small ELF *runtime* with a SquashFS
+image concatenated onto it; the runtime FUSE-mounts that filesystem and runs
+`AppRun` inside. LinRAR builds one directly with `mksquashfs` plus a
+concatenation — no `appimagetool` needed. It obtains the runtime stub from, in
+order: its own cache, `appimagetool` if installed, any AppImage already on the
+machine (the runtime size is computed from the ELF section headers, so nothing
+is executed), or a one-time ~1 MB download you are asked to approve.
+
+**Themed chrome.** Qt stops drawing a sub-control's built-in glyph as soon as
+that sub-control is styled at all — which is why a styled combo box loses its
+drop-down arrow. `theme.py` therefore paints the small monochrome parts
+(arrows, check boxes, radios, tree twisties, scrollbar arrows) into PNGs in the
+cache directory, tinted for the active theme, and hands them back to the style
+sheet. If that cache cannot be written the rules are dropped and the Fusion
+style keeps drawing its own.
+
+**Icons** are inline SVG rendered on demand, so they stay sharp at any size
+without shipping binary assets, and each theme gets its own build with paper
+whites, steel and shadows re-tuned.
+
+## Two traps that cost real debugging time
+
+**Never name a settings group `general`.** Qt writes `general/last_folder` as
+`[%General] last_folder` and a *fresh process* reads it back as
+`General/last_folder`, so `value("general/last_folder")` returns nothing. It
+looks fine within one process because Qt serves a cached map. LinRAR uses
+`places/`, `admin/` and `meta/` instead, and `settings.py` carries the old
+names forward. Test persistence across two processes, never one.
+
+**Never give a virtual environment's Python a fake `argv[0]`.** A launcher
+doing `exec -a linrar .venv/bin/python -m linrar` breaks the environment:
+CPython resolves its prefix from `argv[0]`, finds no `pyvenv.cfg` beside the
+launcher script, and falls back to the system interpreter without PyQt6. Set
+`RESOURCE_NAME` for the X11 window class instead. The installer's final check
+now runs the *launcher* from `/` under `env -i`, which is what a desktop
+launch actually looks like.

@@ -1,0 +1,101 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" width="48" height="48">
+<defs>
+  
+<filter id="sh" x="-30%" y="-30%" width="170%" height="170%">
+  <feDropShadow dx="0" dy="1.1" stdDeviation="1.1"
+                flood-color="#101820"
+                flood-opacity="0.38"/>
+</filter>
+
+  <linearGradient id="pg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#FFFDF4"/><stop offset="1" stop-color="#DCCFAE"/></linearGradient>
+  <linearGradient id="st" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#6E6E7C"/><stop offset="0.5" stop-color="#2A2A34"/><stop offset="1" stop-color="#1A1A22"/></linearGradient>
+  <linearGradient id="stt" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#82828E"/><stop offset="1" stop-color="#6E6E7C"/></linearGradient>
+  <linearGradient id="fdf" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#FBE09B"/><stop offset="0.55" stop-color="#F2C14E"/><stop offset="1" stop-color="#C68F22"/></linearGradient>
+  <linearGradient id="fdb" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#FBE09B"/><stop offset="1" stop-color="#C68F22"/></linearGradient>
+  <linearGradient id="pap" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#FFFFFF"/><stop offset="1" stop-color="#E9EDF2"/></linearGradient>
+  <linearGradient id="grn" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#8BE08B"/><stop offset="0.5" stop-color="#35B04A"/><stop offset="1" stop-color="#1C7A2E"/></linearGradient>
+  <linearGradient id="red" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#F09A8E"/><stop offset="0.5" stop-color="#D6412F"/><stop offset="1" stop-color="#93231A"/></linearGradient>
+  <linearGradient id="blu" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#9CCBF2"/><stop offset="0.5" stop-color="#2C7FC4"/><stop offset="1" stop-color="#14548C"/></linearGradient>
+  <linearGradient id="amb" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#FBDF95"/><stop offset="0.5" stop-color="#EDA92C"/><stop offset="1" stop-color="#B0740E"/></linearGradient>
+  <linearGradient id="stl" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#E2E8EF"/><stop offset="0.5" stop-color="#98A5B4"/><stop offset="1" stop-color="#5C6774"/></linearGradient>
+  <linearGradient id="gls" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ffffff"/><stop offset="1" stop-color="#ffffff"/></linearGradient>
+</defs>
+
+    <g transform="translate(0,0) scale(1.0)" filter="url(#sh)">
+      
+    <linearGradient id="bk0" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#8FD4CB"/>
+      <stop offset="0.45" stop-color="#31A99A"/>
+      <stop offset="1" stop-color="#1B7A6E"/>
+    </linearGradient>
+    <linearGradient id="bk0t" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#8FD4CB"/>
+      <stop offset="1" stop-color="#31A99A"/>
+    </linearGradient>
+    <g>
+      <!-- page block peeking out on the right -->
+      <path d="M35.0 34.6 l4.6 -4.6 v6.199999999999999 l-4.6 4.6 z"
+            fill="url(#pg)"/>
+      <!-- top cover -->
+      <path d="M5.0 33.2 l4.6 -4.6 h31.0 l-4.6 4.6 z" fill="url(#bk0t)"/>
+      <!-- front cover -->
+      <rect x="5.0" y="33.2" width="31.0" height="8.6" rx="1.2"
+            fill="url(#bk0)"/>
+      <!-- gloss -->
+      <path d="M5.9 34.1 h29.2 v3.0959999999999996 h-29.2 z"
+            fill="#ffffff" opacity="0.22"/>
+    </g>
+    
+    <linearGradient id="bk1" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#C89BE0"/>
+      <stop offset="0.45" stop-color="#9A55BE"/>
+      <stop offset="1" stop-color="#6E2E90"/>
+    </linearGradient>
+    <linearGradient id="bk1t" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#C89BE0"/>
+      <stop offset="1" stop-color="#9A55BE"/>
+    </linearGradient>
+    <g>
+      <!-- page block peeking out on the right -->
+      <path d="M35.0 25.4 l4.6 -4.6 v6.199999999999999 l-4.6 4.6 z"
+            fill="url(#pg)"/>
+      <!-- top cover -->
+      <path d="M5.0 24.0 l4.6 -4.6 h31.0 l-4.6 4.6 z" fill="url(#bk1t)"/>
+      <!-- front cover -->
+      <rect x="5.0" y="24.0" width="31.0" height="8.6" rx="1.2"
+            fill="url(#bk1)"/>
+      <!-- gloss -->
+      <path d="M5.9 24.9 h29.2 v3.0959999999999996 h-29.2 z"
+            fill="#ffffff" opacity="0.22"/>
+    </g>
+    
+    <linearGradient id="bk2" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#8FC0EE"/>
+      <stop offset="0.45" stop-color="#3F86CE"/>
+      <stop offset="1" stop-color="#1E5FA4"/>
+    </linearGradient>
+    <linearGradient id="bk2t" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#8FC0EE"/>
+      <stop offset="1" stop-color="#3F86CE"/>
+    </linearGradient>
+    <g>
+      <!-- page block peeking out on the right -->
+      <path d="M35.0 16.2 l4.6 -4.6 v6.199999999999999 l-4.6 4.6 z"
+            fill="url(#pg)"/>
+      <!-- top cover -->
+      <path d="M5.0 14.8 l4.6 -4.6 h31.0 l-4.6 4.6 z" fill="url(#bk2t)"/>
+      <!-- front cover -->
+      <rect x="5.0" y="14.8" width="31.0" height="8.6" rx="1.2"
+            fill="url(#bk2)"/>
+      <!-- gloss -->
+      <path d="M5.9 15.700000000000001 h29.2 v3.0959999999999996 h-29.2 z"
+            fill="#ffffff" opacity="0.22"/>
+    </g>
+    
+      <!-- binding strap across the whole stack -->
+      <path d="M25.5 14.8 l4.6 -4.6 h5 l-4.6 4.6 z" fill="url(#stt)"/>
+      <rect x="25.5" y="14.8" width="5" height="27" fill="url(#st)"/>
+      <rect x="26.4" y="14.8" width="1.2" height="27" fill="#8A8A98"
+            opacity="0.65"/>
+    </g>
+    </svg>
