@@ -7,7 +7,6 @@ import getpass
 import os
 import shlex
 import shutil
-import subprocess
 import tempfile
 from datetime import datetime
 from typing import Callable, Optional

@@ -13,15 +13,16 @@ from PyQt6.QtWidgets import (
     QDialogButtonBox,
     QFileDialog,
     QFormLayout,
+    QGridLayout,
     QGroupBox,
     QHBoxLayout,
     QLabel,
     QLineEdit,
-    QListWidget,
     QMessageBox,
     QPlainTextEdit,
     QProgressBar,
     QPushButton,
+    QSizePolicy,
     QTabWidget,
     QTextBrowser,
     QTextEdit,
@@ -231,7 +232,7 @@ class SettingsDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("Settings")
         self.setWindowIcon(icons.icon("app"))
-        self.resize(480, 470)
+        self.resize(560, 560)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(10, 10, 10, 10)
@@ -311,48 +312,92 @@ class SettingsDialog(QDialog):
         layout.setContentsMargins(10, 10, 10, 10)
 
         detected = QGroupBox("Command line tools")
-        detected_form = QFormLayout(detected)
-        detected_form.setSpacing(5)
+        # A grid rather than a form: the name, the path and the button then
+        # line up in real columns, the path box gets every spare pixel, and
+        # the margins keep the buttons clear of the group box border.
+        grid = QGridLayout(detected)
+        grid.setContentsMargins(12, 8, 12, 10)
+        grid.setHorizontalSpacing(8)
+        grid.setVerticalSpacing(6)
+        grid.setColumnStretch(1, 1)
+
+        heading = QLabel("Where LinRAR found it — or the path you want used")
+        heading.setObjectName("Hint")
+        grid.addWidget(heading, 0, 0, 1, 3)
+
         self.path_edits: dict[str, QLineEdit] = {}
-        for key, label, kind in (
-            ("rar", "rar", "rar"),
-            ("unrar", "unrar", "unrar"),
-            ("sevenzip", "7z", "sevenzip"),
-            ("zip", "zip", "zip"),
+        self.path_labels: dict[str, QLabel] = {}
+        for row, (key, label, kind) in enumerate(
+            (
+                ("rar", "rar", "rar"),
+                ("unrar", "unrar", "unrar"),
+                ("sevenzip", "7z", "sevenzip"),
+                ("zip", "zip", "zip"),
+            ),
+            start=1,
         ):
-            row = QHBoxLayout()
-            row.setSpacing(5)
+            found = tools.find(kind)
+
+            name = QLabel(label)
+            name.setMinimumWidth(46)
+            if not found:
+                name.setObjectName("Warning")   # nothing to run for this one
+
             edit = QLineEdit(str(SETTINGS.get(f"paths/{key}") or ""))
-            edit.setPlaceholderText(tools.find(kind) or "not found")
+            edit.setPlaceholderText(found or "not found — install it or browse")
+            edit.setMinimumWidth(260)
+            edit.setClearButtonEnabled(True)
             edit.setToolTip(
-                "Leave empty to search the PATH and the usual install "
-                "locations, or point at a specific binary."
+                f"Leave empty and LinRAR searches for {label} itself.\n"
+                "Fill this in to pin one specific binary."
             )
+
             browse = QPushButton("Browse...")
-            browse.setMaximumWidth(90)
+            browse.setFixedWidth(96)
+            browse.setAutoDefault(False)
             browse.clicked.connect(
                 lambda _c=False, e=edit, n=label: self._browse_tool(e, n)
             )
-            row.addWidget(edit, 1)
-            row.addWidget(browse, 0)
-            detected_form.addRow(label, row)
+
+            grid.addWidget(name, row, 0)
+            grid.addWidget(edit, row, 1)
+            grid.addWidget(browse, row, 2)
             self.path_edits[key] = edit
-        layout.addWidget(detected)
+            self.path_labels[key] = name
 
         note = QLabel(
-            "Leave a box empty and LinRAR finds the tool itself: the PATH "
-            "first, then the places distributions and manual installs use "
-            "(/usr/local/bin, /opt/rar, ~/.local/bin, /snap/bin, Flatpak and "
-            "Nix profiles). Fill one in to pin a specific build."
+            "Empty means <b>search</b> — the PATH, then /usr/local/bin, "
+            "/opt/rar, ~/.local/bin, /snap/bin, Flatpak and Nix profiles."
         )
         note.setWordWrap(True)
         note.setObjectName("Hint")
-        layout.addWidget(note)
+        note.setToolTip(
+            "Every name these tools ship under is accepted: 7z, 7zz, 7za, "
+            "7zr, and unrar, unrar-nonfree, unrar-free."
+        )
+        # A wrapped label in a grid only gets the height it asks for if the
+        # row is allowed to grow to it.
+        note.setSizePolicy(
+            QSizePolicy.Policy.Preferred, QSizePolicy.Policy.MinimumExpanding
+        )
+        grid.addWidget(note, 5, 0, 1, 3)
+        grid.setRowMinimumHeight(5, note.fontMetrics().height() * 2 + 6)
 
+        buttons = QHBoxLayout()
         manage = QPushButton("Manage dependencies...")
         manage.setIcon(icons.icon("package"))
+        manage.setAutoDefault(False)
         manage.clicked.connect(self._open_dependencies)
-        layout.addWidget(manage, 0, Qt.AlignmentFlag.AlignLeft)
+        rescan = QPushButton("Re-scan")
+        rescan.setIcon(icons.icon("refresh"))
+        rescan.setAutoDefault(False)
+        rescan.clicked.connect(self._rescan_tools)
+        buttons.addWidget(manage)
+        buttons.addWidget(rescan)
+        buttons.addStretch(1)
+        grid.addLayout(buttons, 6, 0, 1, 3)
+
+        layout.addWidget(detected)
 
         admin = QGroupBox("Administrator rights")
         admin_form = QFormLayout(admin)
@@ -397,12 +442,30 @@ class SettingsDialog(QDialog):
         return page
 
     def _browse_tool(self, edit: QLineEdit, name: str) -> None:
-        start = edit.text().strip() or "/usr/bin"
+        start = edit.text().strip() or edit.placeholderText() or "/usr/bin"
+        if not os.path.exists(start):
+            start = "/usr/bin"
         path, _filter = QFileDialog.getOpenFileName(
             self, f"Select the {name} program", start
         )
         if path:
             edit.setText(path)
+
+    def _rescan_tools(self) -> None:
+        """Look for the tools again, after installing one outside LinRAR."""
+        for key, edit in self.path_edits.items():
+            SETTINGS.set(f"paths/{key}", edit.text().strip())
+        SETTINGS.sync()
+        REGISTRY.refresh()
+        for key, kind in (("rar", "rar"), ("unrar", "unrar"),
+                          ("sevenzip", "sevenzip"), ("zip", "zip")):
+            found = tools.find(kind, str(SETTINGS.get(f"paths/{key}") or ""))
+            edit = self.path_edits[key]
+            edit.setPlaceholderText(found or "not found — install it or browse")
+            name = self.path_labels[key]
+            name.setObjectName("" if found else "Warning")
+            name.style().unpolish(name)
+            name.style().polish(name)
 
     def _reset_all(self) -> None:
         reply = QMessageBox.question(

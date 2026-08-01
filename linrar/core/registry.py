@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import os
-from typing import Optional
 
 from .backends.base import ArchiveBackend
 from .backends.rar import RarBackend

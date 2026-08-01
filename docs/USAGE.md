@@ -21,9 +21,16 @@ Five views, from **Options → File list** or `Ctrl+1`…`Ctrl+5`: Details, List
 Small icons, Large icons, Tiles. Click a column header to sort — the choice is
 remembered, as are the column widths and which columns are shown.
 
-<div align="center">
-<img src="images/archive-open.png" width="70%" alt="Browsing inside an archive">
-</div>
+<table>
+<tr>
+<td width="50%" valign="top"><img src="images/archive-open.png" alt="Browsing inside an archive"></td>
+<td width="50%" valign="top"><img src="images/view-large.png" alt="The Large icons view"></td>
+</tr>
+<tr>
+<td align="center"><em>Inside an archive, Details view</em></td>
+<td align="center"><em>The same folder, Large icons</em></td>
+</tr>
+</table>
 
 ## Creating archives
 

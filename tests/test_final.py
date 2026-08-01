@@ -5,10 +5,9 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from linrar.core.backends.rar import RarBackend
 from linrar.core.backends.zip import ZipBackend
 from linrar.core.models import (
-    ArchiveFormat, CompressOptions, ExtractOptions, OverwriteMode,
+    CompressOptions, ExtractOptions, OverwriteMode,
     PasswordRequired,
 )
-from linrar.core.registry import detect_format
 
 PASS = FAIL = 0
 def check(name, cond, extra=""):

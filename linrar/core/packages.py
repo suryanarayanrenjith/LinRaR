@@ -28,17 +28,12 @@ class PackageManager:
     label: str
     install: tuple[str, ...]
     remove: tuple[str, ...]
-    refresh: tuple[str, ...] = ()
-    query: tuple[str, ...] = ()
 
     def install_command(self, packages: list[str]) -> list[str]:
         return [self.binary, *self.install, *packages]
 
     def remove_command(self, packages: list[str]) -> list[str]:
         return [self.binary, *self.remove, *packages]
-
-    def refresh_command(self) -> list[str]:
-        return [self.binary, *self.refresh] if self.refresh else []
 
 
 MANAGERS: dict[str, PackageManager] = {
@@ -48,8 +43,6 @@ MANAGERS: dict[str, PackageManager] = {
         label="APT (Debian / Ubuntu)",
         install=("install", "-y"),
         remove=("remove", "-y"),
-        refresh=("update",),
-        query=("dpkg-query", "-W", "-f=${Status}"),
     ),
     "dnf": PackageManager(
         key="dnf",
@@ -57,7 +50,6 @@ MANAGERS: dict[str, PackageManager] = {
         label="DNF (Fedora / RHEL)",
         install=("install", "-y"),
         remove=("remove", "-y"),
-        refresh=("makecache",),
     ),
     "pacman": PackageManager(
         key="pacman",
@@ -65,7 +57,6 @@ MANAGERS: dict[str, PackageManager] = {
         label="Pacman (Arch / Manjaro)",
         install=("-S", "--noconfirm", "--needed"),
         remove=("-R", "--noconfirm"),
-        refresh=("-Sy",),
     ),
     "zypper": PackageManager(
         key="zypper",
@@ -73,7 +64,6 @@ MANAGERS: dict[str, PackageManager] = {
         label="Zypper (openSUSE)",
         install=("install", "-y"),
         remove=("remove", "-y"),
-        refresh=("refresh",),
     ),
     "apk": PackageManager(
         key="apk",
@@ -81,7 +71,6 @@ MANAGERS: dict[str, PackageManager] = {
         label="APK (Alpine)",
         install=("add",),
         remove=("del",),
-        refresh=("update",),
     ),
     "xbps": PackageManager(
         key="xbps",
@@ -383,10 +372,22 @@ def _probe_version(path: str, dependency: Dependency) -> str:
 
 
 def dependency_status(dependency: Dependency) -> DependencyStatus:
-    for binary in dependency.binaries:
-        path = shutil.which(binary)
-        if path:
-            return DependencyStatus(dependency, path, _probe_version(path, dependency))
+    """Where this tool is, asked exactly the way the backends ask it.
+
+    Using ``shutil.which`` here instead would let the manager report "Missing"
+    for a tool LinRAR is quite happily running — one installed in /opt/rar or a
+    Nix profile, say, which :mod:`linrar.core.tools` finds and PATH does not.
+    """
+    from . import tools
+
+    path = tools.find(dependency.key) if dependency.key in tools.CANDIDATES else ""
+    if not path:
+        for binary in dependency.binaries:
+            path = shutil.which(binary) or ""
+            if path:
+                break
+    if path:
+        return DependencyStatus(dependency, path, _probe_version(path, dependency))
     return DependencyStatus(dependency)
 
 

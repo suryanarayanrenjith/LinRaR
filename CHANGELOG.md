@@ -62,6 +62,9 @@ manager, a one-command installer, and a light and dark theme of its own.
   lost PyQt6.
 - `rar a -p-` does not mean "no password" — it encrypts with the literal
   password `-`. Read commands get `-p-`; write commands get no `-p` at all.
+- The Dependencies manager located tools with `PATH` alone while the rest of
+  the app searched further, so a `rar` in `/opt/rar` or a Nix profile was
+  reported "Missing" while LinRAR was quite happily running it.
 - unrar 7 prints an `Archive comment:` heading above the comment where unrar 6
   printed it bare, so on newer distributions every archive comment gained that
   line — and gained another one each time it was edited. The heading is now

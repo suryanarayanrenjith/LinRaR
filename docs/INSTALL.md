@@ -1,7 +1,7 @@
 # Installing LinRAR
 
 ```bash
-git clone https://github.com/<you>/LinRAR.git
+git clone https://github.com/suryanarayanrenjith/LinRAR.git
 cd LinRAR
 ./install.sh
 linrar
@@ -88,6 +88,72 @@ squashfs-tools libsecret`) and you re-run with `--no-deps`. PyQt6 from pip needs
 not at all. Reading RAR archives only needs `unrar`; without `rar` you cannot
 *create* them. Install RARLAB's own build anywhere on the system and point
 LinRAR at it in **Settings → Tools and system**.
+
+## The Dependencies manager
+
+Everything below can be done from inside LinRAR, from **Tools → Dependencies**
+or the highlighted **Deps** button on the toolbar. The README has the
+[walkthrough](../README.md#setting-up-the-tools); this is the reference.
+
+### What it drives
+
+LinRAR builds the command from your distribution's own package manager and
+runs it as root, streaming the output into the dialog:
+
+| Manager | Install | Remove |
+|---|---|---|
+| APT | `apt-get install -y` | `apt-get remove -y` |
+| DNF | `dnf install -y` | `dnf remove -y` |
+| Pacman | `pacman -S --noconfirm --needed` | `pacman -R --noconfirm` |
+| Zypper | `zypper install -y` | `zypper remove -y` |
+| APK | `apk add` | `apk del` |
+| XBPS | `xbps-install -y` | `xbps-install -y` |
+| eopkg | `eopkg install -y` | `eopkg remove -y` |
+| Portage | `emerge --noreplace` | `emerge --unmerge` |
+| rpm-ostree | `rpm-ostree install --idempotent --apply-live` | `rpm-ostree uninstall` |
+
+Nothing is run behind your back: the exact command appears in the Details pane
+before it starts, and if LinRAR cannot obtain administrator rights it shows you
+the command to paste into a terminal instead of failing silently.
+
+### Administrator rights
+
+Package changes need root. LinRAR asks once per session, through whichever
+tool your system has:
+
+- **pkexec** — your desktop's own authentication dialog. Preferred, because
+  LinRAR never sees your password.
+- **sudo** / **doas** — LinRAR asks for the password itself and passes it to
+  the helper's standard input. It is used once and not stored; `sudo -v` is
+  refreshed in the background so the authorisation survives for the session
+  (about fifteen minutes past the last use).
+
+If sudo is configured to run without a password, nothing is asked at all.
+**Settings → Tools and system** chooses which tool to use if you have several.
+
+### Status and versions
+
+Each component is probed by running it and reading the version out of its
+banner, so what you see is the tool that will actually run — not merely a
+package the distribution believes is installed. The location column shows the
+resolved path, which is how you confirm LinRAR picked up the `rar` you meant
+when several are present.
+
+### When a component is not packaged
+
+`rar` is shareware: Ubuntu keeps it in *multiverse*, Fedora in *RPM Fusion
+nonfree*, Arch only in the AUR, and Void does not package it at all. The
+Details pane says which applies to you. If your distribution has no package:
+
+1. Download RARLAB's Linux build from [rarlab.com](https://www.rarlab.com/download.htm).
+2. Unpack it anywhere — `/opt/rar` and `~/.local/bin` are both searched
+   automatically.
+3. Press **Re-scan** in **Settings → Tools and system**, or point straight at
+   the binary there if you put it somewhere unusual. Either way LinRAR picks it
+   up without a restart.
+
+Reading RAR archives only ever needs `unrar`, which nearly every distribution
+does package.
 
 ## Finding the tools
 

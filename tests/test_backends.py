@@ -7,10 +7,10 @@ from linrar.core.backends.rar import RarBackend
 from linrar.core.backends.zip import ZipBackend
 from linrar.core.backends.sevenzip import SevenZipBackend
 from linrar.core.models import (
-    ArchiveFormat, CompressOptions, CompressionMethod, ExtractOptions,
+    ArchiveFormat, CompressOptions, ExtractOptions,
     OverwriteMode, UpdateMode, PasswordRequired, OperationError,
 )
-from linrar.core.registry import detect_format, REGISTRY
+from linrar.core.registry import detect_format
 from linrar.core import convert as convert_mod
 
 PASS = FAIL = 0

@@ -18,7 +18,6 @@ from PyQt6.QtWidgets import (
     QFormLayout,
     QGroupBox,
     QHBoxLayout,
-    QHeaderView,
     QInputDialog,
     QLabel,
     QLineEdit,
@@ -27,17 +26,14 @@ from PyQt6.QtWidgets import (
     QMessageBox,
     QPlainTextEdit,
     QPushButton,
-    QSpinBox,
     QTreeWidget,
     QTreeWidgetItem,
     QVBoxLayout,
-    QWidget,
 )
 
 from ...core import report as report_module
 from ...core.models import (
     ArchiveEntry,
-    ArchiveFormat,
     ArchiveInfo,
     CompressionMethod,
     format_size,
@@ -45,7 +41,6 @@ from ...core.models import (
 )
 from ...core.passwords import PASSWORDS, PasswordEntry
 from ...core.profiles import PROFILES, Profile
-from ...core.registry import REGISTRY
 from ...core.settings import SETTINGS
 from .. import icons, theme
 

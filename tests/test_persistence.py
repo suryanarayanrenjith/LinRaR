@@ -12,7 +12,7 @@ app = QApplication([])
 
 from linrar.core import settings as settings_module
 from linrar.core import tools
-from linrar.core.settings import DEFAULTS, Settings, config_path
+from linrar.core.settings import DEFAULTS, SETTINGS, Settings, config_path
 from linrar.ui import icons, theme
 
 PASS = FAIL = 0
@@ -159,6 +159,34 @@ check("the shipped icon is the icon set's own",
 gitignore = open(os.path.join(ROOT, ".gitignore")).read()
 for pattern in (".venv/", ".install-manifest", "__pycache__/"):
     check(f".gitignore covers {pattern}", pattern in gitignore)
+
+print("== the tools tab")
+from PyQt6.QtWidgets import QApplication as _QApp
+from linrar.ui.main_window import MainWindow
+from linrar.ui.dialogs.misc import SettingsDialog
+
+theme.apply(app, "light")
+window = MainWindow()
+tools_tab = SettingsDialog(window)
+tools_tab.tabs.setCurrentIndex(1)
+check("a path box for every tool",
+      set(tools_tab.path_edits) == {"rar", "unrar", "sevenzip", "zip"},
+      sorted(tools_tab.path_edits))
+check("the boxes are wide enough for a path",
+      all(e.minimumWidth() >= 260 for e in tools_tab.path_edits.values()),
+      {k: e.minimumWidth() for k, e in tools_tab.path_edits.items()})
+check("each box shows where the tool was found",
+      all(e.placeholderText() for e in tools_tab.path_edits.values()))
+tools_tab.path_edits["rar"].setText("/nonexistent/rar")
+tools_tab._rescan_tools()
+check("Re-scan falls back to the search when a path is wrong",
+      tools_tab.path_edits["rar"].placeholderText().endswith("rar"),
+      tools_tab.path_edits["rar"].placeholderText())
+tools_tab.path_edits["rar"].setText("")
+tools_tab._rescan_tools()
+check("clearing a box clears the setting", SETTINGS.get("paths/rar") == "")
+tools_tab.close()
+window.close()
 
 print("== the installer's desktop wiring")
 install = open(os.path.join(ROOT, "install.sh")).read()

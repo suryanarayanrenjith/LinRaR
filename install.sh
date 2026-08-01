@@ -97,11 +97,9 @@ done
 if [ "$MODE" = "system" ]; then
     BIN_DIR="/usr/local/bin"
     DATA_DIR="/usr/local/share"
-    XDG_DATA_DIRS_TARGET="/usr/local/share"
 else
     BIN_DIR="${HOME}/.local/bin"
     DATA_DIR="${XDG_DATA_HOME:-$HOME/.local/share}"
-    XDG_DATA_DIRS_TARGET="$DATA_DIR"
 fi
 APPS_DIR="${DATA_DIR}/applications"
 ICON_DATA="${DATA_DIR}/icons"

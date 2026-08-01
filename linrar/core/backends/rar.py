@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import os
 import re
-import shutil
 import tempfile
 from datetime import datetime
 from typing import Optional

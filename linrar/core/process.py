@@ -12,7 +12,6 @@ from __future__ import annotations
 import os
 import re
 import selectors
-import signal
 import subprocess
 import threading
 from typing import Callable, Iterable, Optional
