@@ -62,3 +62,8 @@ manager, a one-command installer, and a light and dark theme of its own.
   lost PyQt6.
 - `rar a -p-` does not mean "no password" — it encrypts with the literal
   password `-`. Read commands get `-p-`; write commands get no `-p` at all.
+- unrar 7 prints an `Archive comment:` heading above the comment where unrar 6
+  printed it bare, so on newer distributions every archive comment gained that
+  line — and gained another one each time it was edited. The heading is now
+  stripped, and the listing parsers are covered by tests that feed them both
+  versions' output, so a tool upgrade cannot silently change what LinRAR reads.

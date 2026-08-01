@@ -242,7 +242,7 @@ class RarBackend(ArchiveBackend):
                     break
 
         if header_idx > 0:
-            info.comment = "\n".join(lines[:header_idx]).strip("\n").strip()
+            info.comment = _clean_comment("\n".join(lines[:header_idx]))
         body_start = header_idx + 1 if header_idx >= 0 else 0
 
         for i in range(body_start, min(body_start + 3, len(lines))):
@@ -722,6 +722,25 @@ class RarBackend(ArchiveBackend):
             if created.startswith(("fixed.", "rebuilt.")):
                 return os.path.join(output_dir, created)
         return None
+
+
+#: The heading unrar 7 puts above the comment block; unrar 6 printed the
+#: comment bare.  It is not part of the comment and must not survive into the
+#: UI, nor into the next comment written back — that would grow a header line
+#: on every edit.  Matched exactly: a user comment whose own first line reads
+#: "Comment:" stays untouched, because losing a line of someone's text is
+#: worse than showing one stray heading.
+_COMMENT_LABELS = ("archive comment:",)
+
+
+def _clean_comment(block: str) -> str:
+    """The comment itself, without unrar's heading or surrounding blank lines."""
+    lines = block.strip("\n").splitlines()
+    while lines and not lines[0].strip():
+        lines.pop(0)
+    if lines and lines[0].strip().lower() in _COMMENT_LABELS:
+        lines.pop(0)
+    return "\n".join(lines).strip()
 
 
 def _make_progress_handlers(ctx: TaskContext):

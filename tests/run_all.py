@@ -23,6 +23,7 @@ ROOT = os.path.dirname(HERE)
 
 #: Slowest last: the backend suites shell out to rar/unrar many times.
 ORDER = [
+    "test_parsing.py",
     "test_theme.py",
     "test_customize.py",
     "test_persistence.py",
