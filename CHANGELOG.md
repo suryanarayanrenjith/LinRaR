@@ -2,6 +2,65 @@
 
 All notable changes to LinRAR, newest first.
 
+## Unreleased
+
+### Settings for every user
+
+- **System-wide configuration.** `/etc/linrar/linrar.conf`, its
+  `conf.d/*.conf` drop-ins and any `$XDG_CONFIG_DIRS/LinRAR/linrar.conf` are
+  read before the user's own file, so a machine can be set up once for
+  everybody. Each layer overrides the one before; the user still has the last
+  word unless the administrator says otherwise.
+- **Locking.** A `[policy]` section names keys the user may not change —
+  `locked=view/theme, paths/*`, with shell wildcards, or `lock_all=true` for
+  every key the file sets. A locked setting keeps the administrator's value,
+  ignores anything already in the user's file, and is never written back to it.
+- **The interface says so.** Every menu entry, checkbox, combo and path box
+  bound to a locked key is greyed out with a tooltip naming the file that
+  decided it; the Settings and Customize dialogs carry a banner counting them;
+  **Settings → Tools and system** lists the system files in force and how many
+  settings each contributes. Nothing is clickable that would not be saved.
+- **`linrar --config-info`** prints the files in play, the locked keys, and
+  every effective value with the layer it came from.
+- `install.sh --system` writes the file (fully commented out, so it changes
+  nothing until edited); `--global-config` adds it to a user install and
+  `--print-global-config` writes the template to stdout. It is never
+  overwritten, and `uninstall.sh` removes it only when it is still byte for
+  byte what was installed.
+- Window geometry (`geometry/*`) and the config version stamp (`meta/*`) are
+  deliberately outside the administrator's reach.
+
+### Linux only, and it says so
+
+- The application, `install.sh`, `uninstall.sh` and `run.sh` all check the
+  platform first and stop with an explanation — and a suggestion of what to use
+  instead — on anything but Linux. The check in `linrar/__main__.py` runs
+  *before* PyQt6 is imported, so the message arrives even where Qt will not
+  load. `LINRAR_ALLOW_ANY_OS=1` overrides it, loudly, for porting work.
+
+### The installers run once
+
+- Running `./install.sh` over a working install is refused: it prints the
+  version, date, mode, project folder and launcher of what is already there,
+  changes nothing, and exits `3`. `--reinstall` (or `--force`) goes ahead, and
+  also repairs an install whose launcher has gone missing.
+- Running `./uninstall.sh` with nothing installed is refused the same way,
+  rather than sweeping the standard locations on the off chance; `--force`
+  sweeps anyway.
+- Both learned `--status`, which reports the state and stops.
+- Both are driven by a new `.install-receipt`, written beside the project and
+  copied into the data directory so a `--system` install is recognised from a
+  fresh clone. An install made before receipts existed is still detected, from
+  the launcher.
+
+### Fixed
+
+- `Settings.string_list()` now reads through the system layer like every other
+  getter, and accepts the single comma-separated line a hand-written file uses.
+- A `#`-commented system config can no longer set anything: Qt's INI parser
+  treats `#` as an ordinary character, so those lines arrived as keys named
+  `#theme`. They are dropped, and the shipped template warns about it.
+
 ## 2.0.0
 
 The release this repository starts from: a complete WinRAR-style archive

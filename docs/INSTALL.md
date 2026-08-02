@@ -10,6 +10,13 @@ linrar
 Nothing is copied out of this folder: LinRAR runs from where you cloned it, and
 the launcher points back at it. Move the folder and re-run `./install.sh`.
 
+**Linux only.** LinRAR drives the Linux builds of `rar`, `unrar`, `7z` and
+`zip`, stores its settings under the XDG base directories, and registers itself
+with a freedesktop.org desktop. The installer, the uninstaller and the
+application all check `uname` / `sys.platform` first and stop with an
+explanation anywhere else. On Windows use WinRAR or 7-Zip; on macOS use Keka.
+Under WSL, install inside the Linux distribution, not on the Windows side.
+
 ## Options
 
 | Flag | Effect |
@@ -18,8 +25,46 @@ the launcher points back at it. Move the folder and re-run `./install.sh`.
 | `--system` | install for every user, under `/usr/local` (needs administrator rights) |
 | `--no-deps` | do not touch system packages; set the app up only |
 | `--keep-venv` | reuse the existing `.venv` instead of rebuilding it |
+| `--global-config` | also write `/etc/linrar/linrar.conf`; `--system` always does |
+| `--print-global-config` | print that file's template on stdout and stop |
+| `--reinstall`, `--force` | install again over an existing install, or repair a broken one |
+| `--status` | report whether LinRAR is installed, then stop |
 | `-y`, `--yes` | assume yes, ask nothing |
 | `-h`, `--help` | usage |
+
+## It installs once
+
+A second `./install.sh` over a working install is **refused**. It prints what
+is already there — version, date, mode, project folder, launcher — changes
+nothing at all, and exits with status `3`:
+
+```
+$ ./install.sh
+error: LinRAR is already installed on this system.
+
+    version     2.0.0
+    installed   2026-08-02 10:25:06 +0530
+    mode        user
+    from        /home/you/LinRAR
+    launcher    /home/you/.local/bin/linrar
+    receipt     /home/you/LinRAR/.install-receipt
+
+    Nothing has been changed.  Pick one:
+      ./install.sh --reinstall   install over it again, repairing it
+      ./uninstall.sh             remove it first, then install cleanly
+      ./install.sh --status      show this again
+```
+
+What it goes on is a **receipt**, `.install-receipt`, written beside the
+project and copied to `<data dir>/linrar/install-receipt` so that a `--system`
+install is still recognised from a fresh clone. If the receipt is there but the
+launcher it names is gone, the install is reported as *incomplete* and
+`--reinstall` repairs it. An install made by a version older than this one has
+no receipt; the launcher itself is then the evidence.
+
+`./uninstall.sh` is the mirror image: run it when LinRAR is not installed and
+it refuses with the same exit status rather than sweeping your home directory
+on the off chance. `--force` sweeps anyway.
 
 ## What it puts where
 
@@ -34,23 +79,46 @@ A user install writes only inside your home directory:
 ~/.local/share/kservices5/ServiceMenus/linrar.desktop   … older Plasma
 ~/.local/share/nemo/actions/linrar-*.nemo_action      Nemo right-click actions
 ~/.local/share/{nautilus,nemo,caja}/scripts/LinRAR*   Scripts submenu entries
+~/.local/share/linrar/install-receipt                 the install receipt
 ~/.config/Thunar/uca.xml                              Thunar custom actions (merged)
 ```
 
 Every path it creates is recorded in `.install-manifest`, which `uninstall.sh`
 reads back. A `--system` install uses `/usr/local/bin` and `/usr/local/share`
-instead.
+instead, and adds `/etc/linrar/linrar.conf`.
 
 Your settings live separately, in `~/.config/LinRAR/linrar.conf`, and survive
 uninstalling unless you pass `--purge-settings`.
+
+## Settings for every user
+
+`/etc/linrar/linrar.conf` configures LinRAR for everyone on the machine. A
+`--system` install writes it; from a `--user` install, add `--global-config`,
+or write it yourself:
+
+```bash
+sudo ./install.sh --print-global-config > /etc/linrar/linrar.conf
+```
+
+The file ships with every setting commented out, so it changes nothing until
+you edit it. See [Settings for every user](USAGE.md#settings-for-every-user)
+for the format, the read order and how to lock a setting so users cannot change
+it. `linrar --config-info` prints exactly what is in force and where each value
+came from.
+
+It is never overwritten, not even by `--reinstall`. On uninstall it is removed
+only if it is still byte for byte what `install.sh` wrote — a file you have
+edited is kept, and named, unless you pass `--purge-settings`.
 
 ## Uninstalling
 
 ```bash
 ./uninstall.sh                    # everything, including .venv
 ./uninstall.sh --keep-venv        # leave the Python environment alone
-./uninstall.sh --purge-settings   # also forget your preferences
+./uninstall.sh --purge-settings   # also forget your preferences and /etc/linrar
 ./uninstall.sh --purge-tools      # also remove unrar / rar / 7z / zip
+./uninstall.sh --status           # is it installed at all?
+./uninstall.sh --force            # clean up even with no receipt
 ```
 
 The folder containing LinRAR is never deleted — remove it yourself when you are

@@ -141,8 +141,12 @@ linrar --extract-here a.rar b.zip  # unpack each one beside itself
 linrar --extract-to  a.rar         # unpack, asking where and how
 linrar --add *.txt                 # add the files to a new archive
 linrar --test a.rar                # check for damage
+linrar --config-info               # where every setting comes from
 linrar --version | --help
 ```
+
+LinRAR runs on Linux only; on any other system it prints why and exits without
+opening a window.
 
 ## Keyboard shortcuts
 
@@ -187,3 +191,64 @@ order, layout, window and splitter geometry, column widths, the compression
 settings of the last archive you made, the extraction options you last used,
 the find mask, favourites, folder history, saved profiles and password
 metadata. **Settings → Tools and system → Reset all settings** clears it.
+
+## Settings for every user
+
+An administrator can set defaults for everyone on the machine, and lock the
+ones that are not up for discussion. LinRAR reads these files in order, each
+one overriding the one before:
+
+```
+/etc/xdg/LinRAR/linrar.conf      any $XDG_CONFIG_DIRS entry
+/etc/linrar/linrar.conf          the machine's own settings
+/etc/linrar/conf.d/*.conf        drop-ins, in name order
+~/.config/LinRAR/linrar.conf     each user's own choices — last word
+```
+
+`./install.sh --system` writes `/etc/linrar/linrar.conf` with every setting
+commented out; `--global-config` adds it to a user install, and
+`./install.sh --print-global-config` prints it to redirect wherever you like.
+It is never overwritten once it exists.
+
+The format is the same INI the user's file uses. **Comments start with a
+semicolon** — a `#` is an ordinary character to the parser, so `#theme=light`
+would be read as a setting named `#theme` (LinRAR ignores keys like that, but
+your setting would silently not apply):
+
+```ini
+[view]
+theme=dark
+show_tree=true
+
+[compression]
+method=5
+
+[paths]
+rar=/opt/rar/rar
+
+[policy]
+locked=view/theme, paths/*
+```
+
+Everything outside `[policy]` is a **default**: the user can still change it,
+and their choice wins. `locked` makes a key the administrator's: LinRAR keeps
+the value set here, ignores whatever is in the user's file, greys the control
+out wherever it appears — menu entry, Settings dialog, Customize dialog — with
+a tooltip naming the file, and leaves the key alone when the user saves. A key
+is its section and name joined by a slash, shell wildcards work, and
+`lock_all=true` locks every key the file sets without naming them twice.
+
+Window geometry (`geometry/*`) and the config version stamp (`meta/*`) cannot
+be set or locked from a system file. They are not preferences, and freezing
+them would break the window rather than manage it.
+
+To see what any of it actually resolves to:
+
+```bash
+linrar --config-info
+```
+
+It lists the files in play, the locked keys, every effective value, and whether
+each came from the user, the system, or the built-in default. **Settings →
+Tools and system** shows the same thing in the application, under *Saved
+settings*.

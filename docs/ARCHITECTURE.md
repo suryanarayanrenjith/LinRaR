@@ -20,7 +20,8 @@ linrar/               the application
 │   ├── tools.py      finding rar/unrar/7z/zip wherever a distro puts them
 │   ├── elevation.py  pkexec / sudo / doas, with a held authorisation
 │   ├── packages.py   distribution and package-manager detection
-│   ├── settings.py   one INI file, with migration from older layouts
+│   ├── settings.py   layered INI: built-in < /etc/linrar < the user's file
+│   ├── platform.py   the Linux-only check, made before Qt is imported
 │   ├── sfx.py        AppImage builder (runtime, AppRun, squashfs, concat)
 │   ├── convert.py    batch format conversion
 │   ├── profiles.py   saved compression profiles
@@ -33,6 +34,7 @@ linrar/               the application
     ├── icons.py      gradient 3D SVG icon set, one build per theme
     ├── filelist.py   one model, five views, one selection
     ├── foldertree.py the folder pane
+    ├── policy.py     greying out what an administrator has locked
     ├── main_window.py
     └── dialogs/      archive, extract, sfx, convert, customize, tools, …
 
@@ -44,6 +46,31 @@ run.sh                run from the source tree without installing
 ```
 
 ## Things worth knowing
+
+**Settings are three layers, not one file.** `DEFAULTS` in `settings.py`, then
+whatever `/etc/linrar/linrar.conf` and its `conf.d` drop-ins say, then the
+user's `~/.config/LinRAR/linrar.conf` — each overriding the last. A `[policy]`
+section in the system layer can *lock* keys (`fnmatch` patterns, so `paths/*`
+works); `Settings.set()` then returns `False` and writes nothing. That return
+value is not enough on its own: a control the user can still click but that
+refuses to save reads as a bug, so `ui/policy.py` disables every widget and
+menu action bound to a locked key and explains why in its tooltip. `geometry/*`
+and `meta/*` are outside the system layer entirely — they are state, not
+preferences, and locking them would freeze the window rather than manage it.
+
+**Qt's INI parser treats `;` as a comment and `#` as an ordinary character.**
+A system config commented the shell way arrives as keys called `#theme`, so
+`SystemConfig` drops any key beginning with `#` or `;` rather than acting on
+it, and the shipped template says so at the top. A file that fails to parse
+cleanly keeps whatever *did* parse and records the problem, which surfaces in
+`linrar --config-info` and in the Settings dialog: silently ignoring an
+administrator is worse than partly obeying one and saying so.
+
+**The platform check happens before PyQt6 is imported.** `linrar/__main__.py`
+calls `ensure_supported()` in its module body, above `from .app import main`.
+A system LinRAR does not support is also one where the Qt wheels may not
+install, and `ModuleNotFoundError: PyQt6` is a far worse explanation than the
+real one. `app.main()` repeats the check, because it is imported directly too.
 
 **Progress parsing.** `rar` reports progress by rewriting the current terminal
 line with backspaces (`\b\b\b\b 42%`) and emits no newline until a file

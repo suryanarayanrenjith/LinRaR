@@ -49,7 +49,7 @@ from ..core import elevation, packages
 from ..core.registry import REGISTRY, detect_format, looks_like_archive
 from ..core.settings import DEFAULT_TOOLBAR, SETTINGS
 from ..core.tasks import Task
-from . import icons, theme
+from . import icons, policy, theme
 from .dialogs.archive import ArchiveDialog
 from .dialogs.conflict import resolve_conflicts
 from .dialogs.convert import ConvertDialog
@@ -167,6 +167,8 @@ class MainWindow(QMainWindow):
         self._build_menus()
         self._build_toolbar()
         self._build_status_bar()
+        # Anything an administrator locked must not look clickable.
+        self._apply_policy()
 
         geometry = SETTINGS.load_geometry("main")
         if geometry:
@@ -2702,6 +2704,43 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
     # customization
     # ------------------------------------------------------------------
+
+    def _apply_policy(self) -> None:
+        """Grey out every menu entry whose setting is not the user's to change.
+
+        Without this the menu would still toggle, the view would still change,
+        and nothing would be remembered — which reads as a bug rather than as
+        a decision somebody made on purpose.
+        """
+        self.locked_settings = policy.guard_actions({
+            "view/show_tree": self.act_show_tree,
+            "view/show_comment": self.act_show_comment,
+            "toolbar/style": self.act_toolbar_text,
+            "view/show_hidden": self.act_show_hidden,
+            "view/show_toolbar": self.act_show_toolbar,
+            "view/show_address": self.act_show_address,
+            "view/show_status": self.act_show_status,
+            "view/grid_lines": self.act_grid_lines,
+            "view/alternate_rows": self.act_alternate_rows,
+            # The corner switch and its toolbar button are the same action.
+            "view/theme": self.act_toggle_theme,
+        })
+        # A group of mutually exclusive entries stands for one setting, so it
+        # is all of them or none.
+        for key, group in (
+            ("view/theme", self.theme_actions),
+            ("view/mode", self.view_mode_actions),
+            ("view/tree_side", self.tree_side_actions),
+            ("view/comment_side", self.comment_side_actions),
+        ):
+            if not SETTINGS.is_locked(key):
+                continue
+            policy.guard_actions([(key, action) for action in group.values()])
+            if key not in self.locked_settings:
+                self.locked_settings.append(key)
+        # A submenu whose every entry is greyed out should not invite a click.
+        if SETTINGS.is_locked("view/theme"):
+            policy.guard_actions([("view/theme", self.theme_menu.menuAction())])
 
     def set_view_mode(self, mode: str) -> None:
         """Switch the file pane between Details, List, icons and tiles."""

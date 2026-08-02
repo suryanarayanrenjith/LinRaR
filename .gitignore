@@ -4,6 +4,7 @@
 .venv/
 venv/
 .install-manifest
+.install-receipt
 
 # --- Python ---------------------------------------------------------------
 __pycache__/

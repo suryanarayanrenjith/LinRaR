@@ -33,8 +33,9 @@ from PyQt6.QtWidgets import (
 from ...core.models import ArchiveInfo, format_size, format_size_short
 from ...core import elevation, tools
 from ...core.registry import REGISTRY
+from ...core import settings as settings_module
 from ...core.settings import SETTINGS
-from .. import icons, theme
+from .. import icons, policy, theme
 
 APP_VERSION = "2.0.0"
 AUTHOR = "Surya"
@@ -234,11 +235,18 @@ class SettingsDialog(QDialog):
         self.setWindowIcon(icons.icon("app"))
         self.resize(560, 560)
 
+        #: Filled in by the tab builders: every key an administrator locked.
+        self.locked: list[str] = []
+
         layout = QVBoxLayout(self)
         layout.setContentsMargins(10, 10, 10, 10)
         self.tabs = QTabWidget()
         self.tabs.addTab(self._general_tab(), "General")
         self.tabs.addTab(self._paths_tab(), "Tools and system")
+        # The banner is built after the tabs, which is what discovers the locks.
+        self.lock_banner = policy.banner(self.locked, self)
+        if self.lock_banner is not None:
+            layout.addWidget(self.lock_banner)
         layout.addWidget(self.tabs, 1)
 
         buttons = QDialogButtonBox(
@@ -303,6 +311,19 @@ class SettingsDialog(QDialog):
         compression_form.addRow("Default compression method", self.method_combo)
         layout.addWidget(compression)
 
+        self.locked += policy.guard_all({
+            "view/theme": self.theme_combo,
+            "view/show_tree": self.tree_check,
+            "view/show_hidden": self.hidden_check,
+            "compression/method": self.method_combo,
+        })
+        # The two toolbar checkboxes are one setting each, but Customize is the
+        # full version of both: disable it only when neither can be changed.
+        if policy.guard(self.toolbar_text_check, "toolbar/style"):
+            self.locked.append("toolbar/style")
+        if policy.guard(self.large_icons_check, "toolbar/icon_size"):
+            self.locked.append("toolbar/icon_size")
+
         layout.addStretch(1)
         return page
 
@@ -364,6 +385,10 @@ class SettingsDialog(QDialog):
             grid.addWidget(browse, row, 2)
             self.path_edits[key] = edit
             self.path_labels[key] = name
+            if policy.guard(edit, f"paths/{key}"):
+                # Browsing to a program the setting cannot record is a trap.
+                policy.guard(browse, f"paths/{key}")
+                self.locked.append(f"paths/{key}")
 
         note = QLabel(
             "Empty means <b>search</b> — the PATH, then /usr/local/bin, "
@@ -420,6 +445,7 @@ class SettingsDialog(QDialog):
         state.setObjectName("Hint")
         state.setWordWrap(True)
         admin_form.addRow(state)
+        self.locked += policy.guard_all({"admin/method": self.elevation_combo})
         layout.addWidget(admin)
 
         stored = QGroupBox("Saved settings")
@@ -432,6 +458,17 @@ class SettingsDialog(QDialog):
             Qt.TextInteractionFlag.TextSelectableByMouse
         )
         stored_layout.addWidget(where)
+
+        # What an administrator has decided for everyone on this machine, said
+        # plainly and with the files named, so it can be found and edited.
+        system = QLabel(self._system_summary())
+        system.setObjectName("Hint")
+        system.setWordWrap(True)
+        system.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse
+        )
+        stored_layout.addWidget(system)
+
         reset = QPushButton("Reset all settings...")
         reset.setIcon(icons.icon("refresh"))
         reset.clicked.connect(self._reset_all)
@@ -440,6 +477,32 @@ class SettingsDialog(QDialog):
 
         layout.addStretch(1)
         return page
+
+    def _system_summary(self) -> str:
+        """The system-wide layer as rich text for the "Saved settings" box."""
+        system = SETTINGS.system
+        if not system.files and not system.problems:
+            return (
+                "No system-wide configuration is installed. An administrator "
+                f"can create <code>{settings_module.SYSTEM_CONFIG_DIR}/"
+                f"{settings_module.CONFIG_NAME}</code> to set defaults for "
+                "every user of this machine."
+            )
+        lines = ["System-wide settings, applied before your own, come from:"]
+        for path in system.files:
+            count = list(system.origin.values()).count(path)
+            lines.append(
+                f"<code>{path}</code> — {count} setting{'' if count == 1 else 's'}"
+            )
+        for problem in system.problems:
+            lines.append(f"<b>could not be read:</b> {problem}")
+        locked = system.locked_keys()
+        if locked:
+            lines.append(
+                f"{len(locked)} of them {'is' if len(locked) == 1 else 'are'} "
+                "locked: shown greyed out here and left alone when you save."
+            )
+        return "<br>".join(lines)
 
     def _browse_tool(self, edit: QLineEdit, name: str) -> None:
         start = edit.text().strip() or edit.placeholderText() or "/usr/bin"
@@ -468,13 +531,18 @@ class SettingsDialog(QDialog):
             name.style().polish(name)
 
     def _reset_all(self) -> None:
+        extra = (
+            "\n\nThe settings your administrator applies to every user of this "
+            "machine stay in force — they are not yours to clear."
+            if SETTINGS.system.active else ""
+        )
         reply = QMessageBox.question(
             self,
             "Reset all settings",
             "Forget every saved preference — theme, toolbar, layout, "
             "compression and extraction defaults, favourites and history?\n\n"
             "Saved passwords and compression profiles go too. Your archives "
-            "are untouched.",
+            "are untouched." + extra,
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
         )

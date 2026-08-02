@@ -68,12 +68,26 @@ linrar          # or pick LinRAR out of your application menu
 | `./install.sh` | install for the current user (default) |
 | `./install.sh --system` | install for every user, in `/usr/local` |
 | `./install.sh --no-deps` | set up the app only, skip the system packages |
+| `./install.sh --reinstall` | install again over an existing install, or repair one |
+| `./install.sh --status` | is it installed? what version, when, from where? |
 | `./install.sh -y` | answer yes to everything |
 | `./uninstall.sh` | remove all of it, `.venv` included |
+
+**It installs once.** Run `./install.sh` a second time and it tells you what is
+already there and stops, without touching a thing — `--reinstall` is how you
+say you meant it. `./uninstall.sh` refuses just the same when there is nothing
+installed to remove. Both keep a receipt (`.install-receipt`) so they know.
 
 `uninstall.sh` reverses every file the installer wrote — launcher, desktop
 entry, icons, MIME defaults, right-click entries and the virtual environment —
 from a manifest it kept, and leaves the project folder for you to delete.
+
+**Settings for every user.** `/etc/linrar/linrar.conf` (plus `conf.d`
+drop-ins) sets defaults for everyone on the machine, and can *lock* the ones
+that are not up for discussion — a locked setting is greyed out everywhere it
+appears in the app, with a tooltip naming the file. `linrar --config-info`
+prints what is in force and where each value came from. See
+[Settings for every user](docs/USAGE.md#settings-for-every-user).
 
 **Distributions.** APT, DNF/YUM, Pacman, Zypper, APK, XBPS, eopkg, Portage,
 swupd, slackpkg, `rpm-ostree` (Silverblue, Kinoite, Bazzite) and NixOS are all
@@ -239,11 +253,19 @@ linrar --extract-here a.rar b.zip  # unpack each one beside itself
 linrar --extract-to  a.rar         # unpack, asking where and how
 linrar --add *.txt                 # add the files to a new archive
 linrar --test a.rar                # check for damage
+linrar --config-info               # where every setting comes from
 ```
 
 ---
 
 ## Requirements
+
+**Linux.** LinRAR drives the Linux builds of `rar`, `unrar`, `7z` and `zip`,
+keeps its settings in the XDG configuration directories, and registers itself
+with a freedesktop.org desktop. The installer, the uninstaller and the
+application each check before doing anything and stop with an explanation
+anywhere else — on Windows use WinRAR or 7-Zip, on macOS Keka, and under WSL
+install inside the Linux distribution rather than on the Windows side.
 
 | Component | Purpose | Required |
 |---|---|---|

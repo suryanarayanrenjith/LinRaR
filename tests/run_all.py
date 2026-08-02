@@ -27,6 +27,7 @@ ORDER = [
     "test_theme.py",
     "test_customize.py",
     "test_persistence.py",
+    "test_config.py",
     "test_ui.py",
     "test_dialog.py",
     "test_mainwindow.py",

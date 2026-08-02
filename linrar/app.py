@@ -7,6 +7,7 @@ import sys
 
 from PyQt6.QtWidgets import QApplication, QMessageBox
 
+from .core import platform
 from .core.registry import REGISTRY
 from .core.settings import SETTINGS
 from .ui import theme
@@ -39,9 +40,15 @@ Usage:
   linrar --extract-to FILE...       unpack, asking where and how
   linrar --add FILE...              add the files to a new archive
   linrar --test FILE...             check each archive for damage
+  linrar --config-info              show where every setting comes from
   linrar --version | --help
 
 The action flags are what the file manager's right-click menu uses.
+
+LinRAR runs on Linux only. Settings are read from the system-wide
+/etc/linrar/linrar.conf (plus its conf.d drop-ins) and then from
+~/.config/LinRAR/linrar.conf, the second overriding the first except where
+the administrator locked a key.
 """
 
 #: Command line action -> the window method that carries it out.
@@ -65,6 +72,16 @@ def _run_action(window: MainWindow, action: str, paths: list[str]) -> None:
 def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv if argv is None else argv)
 
+    # First, before any window: LinRAR is a Linux program.  Reaching this from
+    # `python -m linrar` means __main__ already said so, but `main()` is also
+    # imported directly, and it must not be the weaker door.
+    if not platform.is_supported():
+        print(platform.problem(), file=sys.stderr)
+        return platform.EXIT_UNSUPPORTED
+    note = platform.warning()
+    if note:
+        print(note, file=sys.stderr)
+
     if "--help" in argv or "-h" in argv:
         print(USAGE)
         return 0
@@ -72,6 +89,11 @@ def main(argv: list[str] | None = None) -> int:
         from .ui.dialogs.misc import APP_VERSION
 
         print(f"LinRAR {APP_VERSION}")
+        return 0
+    if "--config-info" in argv:
+        # For administrators: which files are in play, and what each key
+        # actually resolves to once the layers are merged.
+        print(SETTINGS.describe())
         return 0
     if "--self-test" in argv:
         # Build the whole window once and exit: what install.sh checks with.

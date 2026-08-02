@@ -5,6 +5,9 @@
 # entry, the icon, the file-manager right-click entries and (unless you say
 # otherwise) the virtual environment.
 #
+# It refuses to run when LinRAR was never installed, rather than sweeping the
+# standard locations on the off chance — pass --force if that is what you want.
+#
 # The project folder itself is left alone — delete it yourself when you are
 # done with it.
 
@@ -14,11 +17,21 @@ APP_NAME="LinRAR"
 APP_ID="linrar"
 APP_DIR="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
 MANIFEST="${APP_DIR}/.install-manifest"
+RECEIPT="${APP_DIR}/.install-receipt"
+RECEIPT_NAME="install-receipt"
+
+GLOBAL_CONFIG_DIR="/etc/${APP_ID}"
+GLOBAL_CONFIG_FILE="${GLOBAL_CONFIG_DIR}/${APP_ID}.conf"
 
 KEEP_VENV=0
 PURGE_TOOLS=0
 PURGE_SETTINGS=0
 ASSUME_YES=0
+FORCE=0              # remove even with nothing recorded as installed
+SHOW_STATUS=0        # report what is installed and stop
+
+#: Exit code used when the uninstaller declines to do anything.
+EXIT_REFUSED=3
 
 if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
     C_BOLD=$'\033[1m'; C_DIM=$'\033[2m'; C_OK=$'\033[32m'
@@ -41,9 +54,15 @@ Usage: ./uninstall.sh [options]
 
   --keep-venv        leave .venv in place (it is removed by default)
   --purge-tools      also remove unrar / rar / 7z / zip from the system
-  --purge-settings   also delete LinRAR's saved settings and cache
+  --purge-settings   also delete LinRAR's saved settings and cache, and the
+                     system-wide /etc/linrar
+  --force            clean up even when nothing is recorded as installed
+  --status           report whether ${APP_NAME} is installed, then stop
   -y, --yes          do not ask anything, assume yes
   -h, --help         show this message
+
+Running this when ${APP_NAME} is not installed is refused; --force sweeps the
+standard locations anyway.
 
 The virtual environment (.venv) is removed too, since install.sh created it;
 ./install.sh builds it again. The folder containing LinRAR is never deleted —
@@ -80,6 +99,8 @@ while [ $# -gt 0 ]; do
         --keep-venv)      KEEP_VENV=1 ;;
         --purge-tools)    PURGE_TOOLS=1 ;;
         --purge-settings) PURGE_SETTINGS=1 ;;
+        --force)          FORCE=1 ;;
+        --status)         SHOW_STATUS=1 ;;
         -y|--yes)         ASSUME_YES=1 ;;
         -h|--help)        usage; exit 0 ;;
         *)                die "unknown option: $1  (try --help)" ;;
@@ -87,10 +108,128 @@ while [ $# -gt 0 ]; do
     shift
 done
 
+# Everything below removes Linux desktop integration, so it is Linux-only in
+# exactly the way install.sh is.  --help still works anywhere.
+KERNEL="$(uname -s 2>/dev/null || echo unknown)"
+if [ "$KERNEL" != "Linux" ]; then
+    printf '\n%s%s for Linux%s\n\n' "$C_BOLD" "$APP_NAME" "$C_OFF"
+    die "this uninstaller only runs on Linux (this system reports '${KERNEL}')."
+fi
+
 printf '\n%s%s for Linux — uninstaller%s\n' "$C_BOLD" "$APP_NAME" "$C_OFF"
 printf '%sproject: %s%s\n\n' "$C_DIM" "$APP_DIR" "$C_OFF"
 
 resolve_root || true
+
+# --------------------------------------------------- is anything installed?
+#
+# The receipt install.sh leaves behind is the answer.  Failing that, the
+# launcher and the manifest are enough to know that something is here.
+
+receipt_locations() {
+    printf '%s\n' \
+        "$RECEIPT" \
+        "${XDG_DATA_HOME:-$HOME/.local/share}/${APP_ID}/${RECEIPT_NAME}" \
+        "/usr/local/share/${APP_ID}/${RECEIPT_NAME}" \
+        "/usr/share/${APP_ID}/${RECEIPT_NAME}"
+}
+
+receipt_value() {  # receipt_value <file> <key>
+    [ -f "$1" ] && sed -n "s/^$2=//p" "$1" | head -1
+    return 0
+}
+
+INSTALL_STATE="none"     # none | installed | leftovers
+FOUND_RECEIPT=""; FOUND_MODE=""; FOUND_VERSION=""; FOUND_DATE=""
+FOUND_LAUNCHER=""; FOUND_PROJECT=""; FOUND_GLOBAL_SUM=""
+
+detect_install() {
+    local candidate
+    while IFS= read -r candidate; do
+        [ -f "$candidate" ] || continue
+        FOUND_RECEIPT="$candidate"
+        FOUND_MODE="$(receipt_value "$candidate" mode)"
+        FOUND_VERSION="$(receipt_value "$candidate" version)"
+        FOUND_DATE="$(receipt_value "$candidate" date)"
+        FOUND_LAUNCHER="$(receipt_value "$candidate" launcher)"
+        FOUND_PROJECT="$(receipt_value "$candidate" project)"
+        # Only the checksum matters here: it says whether the global config is
+        # still the untouched template, and so whether it is ours to remove.
+        FOUND_GLOBAL_SUM="$(receipt_value "$candidate" global_config_sha256)"
+        INSTALL_STATE="installed"
+        break
+    done <<EOF
+$(receipt_locations)
+EOF
+    [ "$INSTALL_STATE" = "installed" ] && return 0
+    # No receipt: look for what an install would have left anyway.
+    for candidate in "${HOME}/.local/bin/${APP_ID}" \
+                     "/usr/local/bin/${APP_ID}" "/usr/bin/${APP_ID}" \
+                     "${XDG_DATA_HOME:-$HOME/.local/share}/applications/${APP_ID}.desktop" \
+                     "$MANIFEST"; do
+        if [ -e "$candidate" ]; then
+            INSTALL_STATE="leftovers"
+            [ -x "$candidate" ] && [ -z "$FOUND_LAUNCHER" ] &&
+                FOUND_LAUNCHER="$candidate"
+            break
+        fi
+    done
+    return 0
+}
+
+describe_install() {
+    [ -n "$FOUND_VERSION" ]  && info "version     ${FOUND_VERSION}"
+    [ -n "$FOUND_DATE" ]     && info "installed   ${FOUND_DATE}"
+    [ -n "$FOUND_MODE" ]     && info "mode        ${FOUND_MODE}"
+    [ -n "$FOUND_PROJECT" ]  && info "from        ${FOUND_PROJECT}"
+    [ -n "$FOUND_LAUNCHER" ] && info "launcher    ${FOUND_LAUNCHER}"
+    [ -n "$FOUND_RECEIPT" ]  && info "receipt     ${FOUND_RECEIPT}"
+    [ -f "$GLOBAL_CONFIG_FILE" ] && info "global cfg  ${GLOBAL_CONFIG_FILE}"
+    return 0
+}
+
+detect_install
+
+if [ "$SHOW_STATUS" = "1" ]; then
+    case "$INSTALL_STATE" in
+        installed)
+            step "${APP_NAME} is installed"
+            describe_install
+            printf '\n'
+            exit 0 ;;
+        leftovers)
+            step "${APP_NAME} is not fully installed, but files are left behind"
+            describe_install
+            info "clear them with:  ./uninstall.sh --force"
+            printf '\n'
+            exit 1 ;;
+        *)
+            step "${APP_NAME} is not installed"
+            printf '\n'
+            exit 1 ;;
+    esac
+fi
+
+if [ "$INSTALL_STATE" = "none" ] && [ "$FORCE" = "0" ]; then
+    printf '%serror:%s %s is not installed — there is nothing to remove.\n\n' \
+        "$C_ERR" "$C_OFF" "$APP_NAME" >&2
+    info "No receipt, no launcher and no desktop entry were found."
+    info "Nothing has been changed.  Pick one:"
+    info "  ./install.sh              install it"
+    info "  ./uninstall.sh --force    sweep the standard locations anyway"
+    info "  ./uninstall.sh --status   show this again"
+    printf '\n'
+    exit "$EXIT_REFUSED"
+fi
+
+if [ "$INSTALL_STATE" = "leftovers" ] && [ "$FORCE" = "0" ]; then
+    step "No install receipt, but some ${APP_NAME} files are still here"
+    describe_install
+    info "removing what can be found"
+elif [ "$INSTALL_STATE" = "installed" ]; then
+    step "Removing this install"
+    describe_install
+fi
 
 remove_path() {  # remove_path <path>
     local path="$1"
@@ -115,7 +254,8 @@ if [ -f "$MANIFEST" ]; then
     while IFS= read -r path; do
         [ -n "$path" ] || continue
         case "$path" in
-            */Thunar/uca.xml) continue ;;   # handled separately below
+            */Thunar/uca.xml)    continue ;;   # handled separately below
+            "$GLOBAL_CONFIG_FILE") continue ;; # ditto: it may have been edited
         esac
         remove_path "$path"
         REMOVED=$((REMOVED + 1))
@@ -124,6 +264,13 @@ if [ -f "$MANIFEST" ]; then
 else
     warn "no install manifest — falling back to the standard locations"
 fi
+
+# The receipts: this install is no longer an install once they are gone.
+remove_path "$RECEIPT"
+for base in "${XDG_DATA_HOME:-$HOME/.local/share}" /usr/local/share /usr/share; do
+    remove_path "${base}/${APP_ID}/${RECEIPT_NAME}"
+    rmdir "${base}/${APP_ID}" 2>/dev/null || true
+done
 
 # Belt and braces: sweep the standard locations whether or not a manifest
 # existed, so an install from an older version is cleaned up too.
@@ -226,6 +373,37 @@ else
 fi
 
 # ---------------------------------------------------------------- 5. extras
+
+# -- the system-wide configuration --
+#
+# This one belongs to whoever administers the machine, not to this uninstall.
+# It goes only when install.sh wrote it and nobody has touched it since, or
+# when --purge-settings says so outright.
+
+if [ -f "$GLOBAL_CONFIG_FILE" ]; then
+    step "The system-wide configuration"
+    CURRENT_SUM=""
+    if have sha256sum; then
+        CURRENT_SUM="$(sha256sum "$GLOBAL_CONFIG_FILE" 2>/dev/null | cut -d' ' -f1)"
+    fi
+    if [ "$PURGE_SETTINGS" = "1" ]; then
+        remove_path "$GLOBAL_CONFIG_FILE"
+    elif [ -n "$FOUND_GLOBAL_SUM" ] && [ "$CURRENT_SUM" = "$FOUND_GLOBAL_SUM" ]; then
+        info "unchanged since install.sh wrote it"
+        remove_path "$GLOBAL_CONFIG_FILE"
+    else
+        warn "${GLOBAL_CONFIG_FILE} has been edited since it was installed"
+        info "it configures LinRAR for every user, so it is being kept"
+        info "remove it with:  ./uninstall.sh --purge-settings"
+    fi
+    if [ -d "${GLOBAL_CONFIG_DIR}/conf.d" ] &&
+       [ -n "$(ls -A "${GLOBAL_CONFIG_DIR}/conf.d" 2>/dev/null)" ]; then
+        warn "${GLOBAL_CONFIG_DIR}/conf.d still holds drop-in files — kept"
+    else
+        as_root rmdir "${GLOBAL_CONFIG_DIR}/conf.d" 2>/dev/null || true
+    fi
+    as_root rmdir "$GLOBAL_CONFIG_DIR" 2>/dev/null || true
+fi
 
 if [ "$PURGE_SETTINGS" = "1" ]; then
     step "Removing saved settings and cache"

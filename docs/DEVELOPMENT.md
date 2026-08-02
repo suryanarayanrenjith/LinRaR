@@ -44,9 +44,14 @@ they work over SSH and in CI.
 | `test_theme.py` | both themes, painted glyphs, themed icons, live switching |
 | `test_customize.py` | toolbar/view/layout customization, elevation, CLI actions |
 | `test_persistence.py` | the config file, migration, tool discovery, the installer |
+| `test_config.py` | the system-wide config and its locks, the Linux check, the install guards |
 
 Tests write to temporary directories and, where they touch settings, redirect
 `XDG_CONFIG_HOME` — running them does not disturb your own configuration.
+`test_config.py` also points `LINRAR_SYSTEM_CONFIG` at a scratch file, so the
+real `/etc/linrar` is never read, and it only ever runs the installer script
+that is going to *refuse*: whichever of install/uninstall would actually change
+this machine is left alone.
 
 ## Checking the installer
 

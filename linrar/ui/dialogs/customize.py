@@ -27,7 +27,7 @@ from PyQt6.QtWidgets import (
 )
 
 from ...core.settings import DEFAULT_TOOLBAR, SETTINGS
-from .. import filelist, icons
+from .. import filelist, icons, policy
 
 _KEY_ROLE = Qt.ItemDataRole.UserRole
 _SEPARATOR = "|"
@@ -47,6 +47,9 @@ class CustomizeDialog(QDialog):
 
         self.window_ref = parent
 
+        #: Keys an administrator locked, collected as the tabs are built.
+        self.locked: list[str] = []
+
         layout = QVBoxLayout(self)
         layout.setContentsMargins(12, 12, 12, 12)
         layout.setSpacing(9)
@@ -55,6 +58,9 @@ class CustomizeDialog(QDialog):
         self.tabs.addTab(self._build_toolbar_tab(), "Toolbar")
         self.tabs.addTab(self._build_list_tab(), "File list")
         self.tabs.addTab(self._build_layout_tab(), "Layout")
+        self.lock_banner = policy.banner(self.locked, self)
+        if self.lock_banner is not None:
+            layout.addWidget(self.lock_banner)
         layout.addWidget(self.tabs, 1)
 
         buttons = QDialogButtonBox(
@@ -111,6 +117,7 @@ class CustomizeDialog(QDialog):
 
         middle = QVBoxLayout()
         middle.addStretch(1)
+        self._arrange_buttons: list[QPushButton] = []
         for label, slot in (
             ("Add →", self._add),
             ("← Remove", self._remove),
@@ -120,6 +127,7 @@ class CustomizeDialog(QDialog):
             button.setMinimumWidth(96)
             button.clicked.connect(slot)
             middle.addWidget(button)
+            self._arrange_buttons.append(button)
         middle.addSpacing(10)
         for label, slot in (("Move up", self._move_up),
                             ("Move down", self._move_down)):
@@ -127,6 +135,7 @@ class CustomizeDialog(QDialog):
             button.setMinimumWidth(96)
             button.clicked.connect(slot)
             middle.addWidget(button)
+            self._arrange_buttons.append(button)
         middle.addStretch(1)
         columns.addLayout(middle, 0)
 
@@ -161,6 +170,17 @@ class CustomizeDialog(QDialog):
         self.style_combo.setCurrentIndex(max(index, 0))
         form.addRow("Captions", self.style_combo)
         layout.addWidget(appearance)
+
+        self.locked += policy.guard_all({
+            "toolbar/icon_size": self.icon_size_combo,
+            "toolbar/style": self.style_combo,
+        })
+        if SETTINGS.is_locked("toolbar/items"):
+            # The two lists and every button between them are one setting.
+            for widget in (self.available_list, self.shown_list,
+                           *self._arrange_buttons):
+                policy.guard(widget, "toolbar/items")
+            self.locked.append("toolbar/items")
 
         self._fill_toolbar_lists(SETTINGS.string_list("toolbar/items"))
         return page
@@ -281,6 +301,17 @@ class CustomizeDialog(QDialog):
             self.column_checks[column] = check
         layout.addWidget(columns_box)
 
+        self.locked += policy.guard_all({
+            "view/row_height": self.row_height_combo,
+            "view/grid_lines": self.grid_check,
+            "view/alternate_rows": self.alternate_check,
+            "view/show_hidden": self.hidden_check,
+        })
+        if SETTINGS.is_locked("view/mode"):
+            for button in self.mode_buttons.values():
+                policy.guard(button, "view/mode")
+            self.locked.append("view/mode")
+
         layout.addStretch(1)
         return page
 
@@ -347,6 +378,17 @@ class CustomizeDialog(QDialog):
         note.setObjectName("Hint")
         note.setWordWrap(True)
         layout.addWidget(note)
+
+        self.locked += policy.guard_all({
+            "view/show_toolbar": self.toolbar_check,
+            "view/show_address": self.address_check,
+            "view/show_status": self.status_check,
+            "view/toolbar_area": self.toolbar_area_combo,
+            "view/show_tree": self.tree_check,
+            "view/tree_side": self.tree_side_combo,
+            "view/show_comment": self.comment_check,
+            "view/comment_side": self.comment_side_combo,
+        })
 
         layout.addStretch(1)
         return page
