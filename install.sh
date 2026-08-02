@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# LinRAR for Linux — installer.
+# LinRAR for Linux: installer.
 #
 # Sets up the Python environment, installs the command line tools LinRAR
 # drives, puts a `linrar` launcher on the PATH, registers the application and
@@ -7,7 +7,7 @@
 # managers that support them.
 #
 # It runs once.  A second run over a working install is refused rather than
-# quietly repeating itself — pass --reinstall if that is really what you want.
+# quietly repeating itself. Pass --reinstall if that is really what you want.
 #
 # Nothing outside this project folder is written without saying so first, and
 # uninstall.sh reverses every one of those writes.
@@ -127,7 +127,7 @@ if [ "$KERNEL" != "Linux" ]; then
     die "this installer only runs on Linux (this system reports '${KERNEL}').
 
     LinRAR drives the Linux builds of rar, unrar, 7z and zip, and registers
-    itself with a freedesktop.org desktop — neither exists here.
+    itself with a freedesktop.org desktop, and neither exists here.
       * On Windows, use WinRAR or 7-Zip.
       * On macOS, use Keka or The Unarchiver.
       * Under WSL, run this inside the Linux distribution, not on the
@@ -187,12 +187,12 @@ install_file() { # install_file <source> <target> [mode]
 
 global_config_template() {
     cat <<'CONFEOF'
-; LinRAR — system-wide configuration
+; LinRAR: system-wide configuration
 ;
 ; Everything set here applies to every user of this machine.  Created by
 ; install.sh and never overwritten afterwards, so it is safe to edit.
 ;
-; Comments start with a semicolon.  A '#' is NOT a comment here — the parser
+; Comments start with a semicolon.  A '#' is NOT a comment here: the parser
 ; would read "#theme=light" as a setting named "#theme".
 ;
 ; The files are read in this order, each one overriding the one before:
@@ -204,7 +204,7 @@ global_config_template() {
 ;
 ; So a value here is a *default*: the user can still change it in Options >
 ; Settings, and their choice wins.  To prevent that, name the key under
-; [policy] at the end — a locked key keeps the value set here, is greyed out
+; [policy] at the end: a locked key keeps the value set here, is greyed out
 ; wherever it appears in the interface, and is left alone when the user saves.
 ;
 ; See what any of it actually resolves to with:
@@ -284,7 +284,7 @@ global_config_template() {
 ; Or lock every key this file sets, without naming them twice:
 ;lock_all=false
 ;
-; Window geometry and the config version cannot be locked — those are not
+; Window geometry and the config version cannot be locked: those are not
 ; preferences, and freezing them would break the window rather than manage it.
 CONFEOF
 }
@@ -376,7 +376,7 @@ describe_install() {
     return 0
 }
 
-printf '\n%s%s for Linux — installer%s\n' "$C_BOLD" "$APP_NAME" "$C_OFF"
+printf '\n%s%s for Linux: installer%s\n' "$C_BOLD" "$APP_NAME" "$C_OFF"
 printf '%sproject: %s   mode: %s%s\n\n' "$C_DIM" "$APP_DIR" "$MODE" "$C_OFF"
 
 for required in "linrar/__main__.py" "assets/linrar.svg" "requirements.txt"; do
@@ -606,7 +606,7 @@ if [ "$PM" = "nix" ]; then
 fi
 
 if [ "$MODE" = "system" ] && [ "$IMMUTABLE" = "1" ]; then
-    warn "/usr is read-only on an image-based system — installing for this user instead"
+    warn "/usr is read-only on an image-based system, installing for this user instead"
     MODE="user"
     BIN_DIR="${HOME}/.local/bin"
     DATA_DIR="${XDG_DATA_HOME:-$HOME/.local/share}"
@@ -628,7 +628,7 @@ if [ "$WITH_DEPS" = "1" ] && [ -n "$PM" ]; then
             if pm_install "$@"; then
                 ok "packages installed"
             else
-                warn "some packages could not be installed — LinRAR will still run,"
+                warn "some packages could not be installed, LinRAR will still run,"
                 warn "and Tools > Dependencies can retry them later"
             fi
             RAR_PKG="$(packages_for rar)"
@@ -655,7 +655,7 @@ if [ "$WITH_DEPS" = "1" ] && [ -n "$PM" ]; then
         warn "install by hand: $*"
     fi
 else
-    [ "$WITH_DEPS" = "1" ] && warn "no package manager detected — skipping system tools"
+    [ "$WITH_DEPS" = "1" ] && warn "no package manager detected, skipping system tools"
 fi
 
 # ---------------------------------------------------------------- 3. venv
@@ -673,7 +673,7 @@ if [ -d "$VENV" ] && [ "$KEEP_VENV" = "0" ]; then
 fi
 if [ ! -d "$VENV" ]; then
     if ! python3 -m venv "$VENV" 2>/dev/null; then
-        warn "python3 -m venv failed — the venv module is a separate package here"
+        warn "python3 -m venv failed; the venv module is a separate package here"
         case "$PM" in
             apt)    pm_install python3-venv python3-pip || true ;;
             dnf)    pm_install python3-libs python3-pip || true ;;
@@ -693,7 +693,7 @@ fi
 "$VENV/bin/python" -m pip install --upgrade pip >/dev/null 2>&1 || true
 info "installing PyQt6 (this can take a minute)"
 if ! "$VENV/bin/python" -m pip install -r "${APP_DIR}/requirements.txt"; then
-    warn "the wheel install failed — trying the distribution's own PyQt6"
+    warn "the wheel install failed; trying the distribution's own PyQt6"
     case "$PM" in
         apt)    pm_install python3-pyqt6 python3-pyqt6.qtsvg || true ;;
         dnf)    pm_install python3-pyqt6 python3-pyqt6-base || true ;;
@@ -723,7 +723,7 @@ step "Installing the launcher"
 mkdir -p "$BIN_DIR" 2>/dev/null || as_root mkdir -p "$BIN_DIR"
 write_file "$LAUNCHER" 755 <<EOF
 #!/usr/bin/env bash
-# LinRAR launcher — generated by install.sh, removed by uninstall.sh.
+# LinRAR launcher, generated by install.sh, removed by uninstall.sh.
 #
 # PYTHONPATH rather than cd: the working directory has to stay wherever the
 # caller was, so relative file arguments still resolve.
@@ -752,7 +752,7 @@ ok "${LAUNCHER}"
 
 case ":${PATH}:" in
     *":${BIN_DIR}:"*) : ;;
-    *) warn "${BIN_DIR} is not on your PATH — add this to your shell profile:"
+    *) warn "${BIN_DIR} is not on your PATH; add this to your shell profile:"
        warn "  export PATH=\"${BIN_DIR}:\$PATH\"" ;;
 esac
 
@@ -925,7 +925,7 @@ for scripts_dir in \
     "${DATA_DIR}/nemo/scripts" \
     "${DATA_DIR}/caja/scripts"
 do
-    write_file "${scripts_dir}/LinRAR — Extract here" 755 <<EOF
+    write_file "${scripts_dir}/LinRAR - Extract here" 755 <<EOF
 #!/usr/bin/env bash
 # Generated by LinRAR's installer.
 IFS=\$'\n'
@@ -933,14 +933,14 @@ exec "${LAUNCHER}" --extract-here \$NAUTILUS_SCRIPT_SELECTED_FILE_PATHS \\
                                  \$NEMO_SCRIPT_SELECTED_FILE_PATHS \\
                                  \$CAJA_SCRIPT_SELECTED_FILE_PATHS
 EOF
-    write_file "${scripts_dir}/LinRAR — Extract to..." 755 <<EOF
+    write_file "${scripts_dir}/LinRAR - Extract to..." 755 <<EOF
 #!/usr/bin/env bash
 IFS=\$'\n'
 exec "${LAUNCHER}" --extract-to \$NAUTILUS_SCRIPT_SELECTED_FILE_PATHS \\
                                 \$NEMO_SCRIPT_SELECTED_FILE_PATHS \\
                                 \$CAJA_SCRIPT_SELECTED_FILE_PATHS
 EOF
-    write_file "${scripts_dir}/LinRAR — Add to archive..." 755 <<EOF
+    write_file "${scripts_dir}/LinRAR - Add to archive..." 755 <<EOF
 #!/usr/bin/env bash
 IFS=\$'\n'
 exec "${LAUNCHER}" --add \$NAUTILUS_SCRIPT_SELECTED_FILE_PATHS \\
@@ -1002,7 +1002,7 @@ PYEOF
         record "$THUNAR_UCA"
         ok "Thunar custom actions (previous file backed up alongside it)"
     else
-        warn "could not update Thunar's uca.xml — left untouched"
+        warn "could not update Thunar's uca.xml; left untouched"
     fi
 fi
 
@@ -1014,13 +1014,13 @@ fi
 
 install_global_config() {
     if [ -f "$GLOBAL_CONFIG_FILE" ]; then
-        info "${GLOBAL_CONFIG_FILE} exists already — left exactly as it is"
+        info "${GLOBAL_CONFIG_FILE} exists already, left exactly as it is"
         GLOBAL_CONFIG_PRESENT=1
         return 0
     fi
     if ! as_root mkdir -p "$GLOBAL_CONFIG_DIR" "${GLOBAL_CONFIG_DIR}/conf.d" \
             2>/dev/null; then
-        warn "could not create ${GLOBAL_CONFIG_DIR} — administrator rights needed"
+        warn "could not create ${GLOBAL_CONFIG_DIR}; administrator rights needed"
         return 1
     fi
     if global_config_template | as_root tee "$GLOBAL_CONFIG_FILE" >/dev/null; then
@@ -1082,7 +1082,7 @@ APP_VERSION="$(sed -n 's/^APP_VERSION = "\(.*\)"$/\1/p' \
 [ -n "$APP_VERSION" ] || APP_VERSION="unknown"
 
 receipt_body() {
-    printf '# %s installation receipt — written by install.sh.\n' "$APP_NAME"
+    printf '# %s installation receipt, written by install.sh.\n' "$APP_NAME"
     printf '# Remove it with ./uninstall.sh, not by hand.\n'
     printf 'app=%s\n'      "$APP_NAME"
     printf 'version=%s\n'  "$APP_VERSION"
@@ -1112,7 +1112,7 @@ then
     ok "$RECEIPT"
 else
     rm -f "${RECEIPT}.tmp"
-    warn "could not write ${RECEIPT} — a second install will not know about this one"
+    warn "could not write ${RECEIPT}; a second install will not know about this one"
 fi
 
 # And beside the rest of the installed data.  Best effort: without it the
@@ -1121,7 +1121,7 @@ DATA_RECEIPT="${DATA_DIR}/${APP_ID}/${RECEIPT_NAME}"
 if receipt_body | write_file "$DATA_RECEIPT" 644 2>/dev/null; then
     ok "$DATA_RECEIPT"
 else
-    warn "could not write ${DATA_RECEIPT} — the project receipt is enough"
+    warn "could not write ${DATA_RECEIPT}; the project receipt is enough"
 fi
 
 mv "${MANIFEST}.tmp" "$MANIFEST"
@@ -1130,7 +1130,7 @@ mv "${MANIFEST}.tmp" "$MANIFEST"
 
 step "Checking that it actually runs"
 # Through the launcher, from an unrelated directory, with the kind of bare
-# environment the application menu hands a process — the same way the desktop
+# environment the application menu hands a process, the same way the desktop
 # will start it.  Testing the interpreter directly would miss anything the
 # launcher itself gets wrong.
 CHECK_OUT="$(cd / && env -i HOME="$HOME" PATH=/usr/bin:/bin \
@@ -1142,7 +1142,7 @@ if [ "$CHECK_OK" = "1" ]; then
     then
         ok "LinRAR starts from a clean environment and its window builds"
     else
-        warn "LinRAR runs but the window failed to build — run 'linrar' to see why"
+        warn "LinRAR runs but the window failed to build; run 'linrar' to see why"
     fi
 else
     printf '%s\n' "$CHECK_OUT" | tail -3 | while IFS= read -r line; do
@@ -1153,7 +1153,7 @@ else
         *xcb*)          warn "install the xcb-cursor library (libxcb-cursor0 / xcb-util-cursor)" ;;
         *PyQt6*)        warn "PyQt6 did not install; try: ${VENV}/bin/pip install PyQt6" ;;
     esac
-    warn "LinRAR is installed but could not be started — fix the above and try 'linrar'"
+    warn "LinRAR is installed but could not be started; fix the above and try 'linrar'"
 fi
 
 # ---------------------------------------------------------------- done

@@ -66,6 +66,43 @@ info = backend.read_info(out)
 check("appimage listable", any(e.name.endswith("hello.txt") for e in info.entries),
       [e.name for e in info.entries][:5])
 
+# -- straight from "Add files to archive", with no .rar step in between --
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+os.environ.setdefault("XDG_CONFIG_HOME", tempfile.mkdtemp(prefix="linrar-cfg-"))
+os.environ.setdefault("LINRAR_SYSTEM_CONFIG", "")
+from PyQt6.QtWidgets import QApplication, QMessageBox
+
+app = QApplication.instance() or QApplication([])
+# Nobody is here to press OK on the "created" box or the runtime question.
+QMessageBox.information = staticmethod(lambda *a, **k: QMessageBox.StandardButton.Ok)
+QMessageBox.question = staticmethod(lambda *a, **k: QMessageBox.StandardButton.Yes)
+
+from linrar.core.registry import REGISTRY as _REGISTRY
+from linrar.ui.main_window import MainWindow
+
+window = MainWindow()
+window.navigate_to(root)
+direct = os.path.join(root, "Direct.AppImage")
+window._create_appimage(
+    _REGISTRY.for_format(ArchiveFormat.RAR5),
+    [f"{src}/hello.txt"],
+    CompressOptions(archive_path=direct, format=ArchiveFormat.RAR5,
+                    base_folder=src, sfx_format=sfx.APPIMAGE),
+    sfx.SfxOptions(title="Direct", ask_destination=False, default_path=""),
+    100, 1,
+)
+check("add-to-archive builds an AppImage in one step",
+      os.path.isfile(direct) and os.access(direct, os.X_OK), direct)
+check("and leaves no intermediate .rar behind",
+      not any(name.startswith("Direct") and name.endswith(".rar")
+              for name in os.listdir(root)),
+      sorted(os.listdir(root)))
+proc = subprocess.run([direct, "--appimage-extract-and-run", "--list"],
+                      capture_output=True, timeout=60, stdin=subprocess.DEVNULL)
+check("its payload is the files that were selected",
+      b"hello.txt" in proc.stdout, proc.stdout[:200])
+window.close()
+
 import shutil; shutil.rmtree(root, ignore_errors=True)
 print(f"\n{PASS} passed, {FAIL} failed")
 sys.exit(1 if FAIL else 0)

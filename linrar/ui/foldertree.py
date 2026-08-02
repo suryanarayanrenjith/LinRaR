@@ -8,6 +8,7 @@ from typing import Optional
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import QTreeWidget, QTreeWidgetItem
 
+from ..core.settings import SETTINGS
 from . import icons
 
 _PATH_ROLE = Qt.ItemDataRole.UserRole
@@ -72,21 +73,24 @@ class FolderTree(QTreeWidget):
         path = item.data(0, _PATH_ROLE)
         if not path or not os.path.isdir(path):
             return
+        # Symlinked folders are followed here (but not when counting children,
+        # which is what stops a self-referential link from hanging the tree).
+        hidden = bool(SETTINGS.get("view/show_hidden"))
         try:
             names = sorted(
-                (e for e in os.scandir(path) if e.is_dir(follow_symlinks=False)),
+                (e for e in os.scandir(path) if e.is_dir(follow_symlinks=True)),
                 key=lambda e: e.name.lower(),
             )
         except OSError:
             return
         for entry in names:
-            if entry.name.startswith("."):
+            if entry.name.startswith(".") and not hidden:
                 continue
             child = QTreeWidgetItem(item, [entry.name])
             child.setIcon(0, icons.icon("folder"))
             child.setData(0, _PATH_ROLE, entry.path)
             child.setData(0, _LOADED_ROLE, False)
-            if _has_subdirs(entry.path):
+            if _has_subdirs(entry.path, hidden):
                 child.setChildIndicatorPolicy(
                     QTreeWidgetItem.ChildIndicatorPolicy.ShowIndicator
                 )
@@ -94,6 +98,35 @@ class FolderTree(QTreeWidget):
                 child.setChildIndicatorPolicy(
                     QTreeWidgetItem.ChildIndicatorPolicy.DontShowIndicator
                 )
+
+    def reload(self, path: str) -> None:
+        """Re-read one branch, for when a folder is created or deleted.
+
+        Only the branch is thrown away, so every other branch the user opened
+        stays open, which is the whole point of not rebuilding the tree.
+        """
+        if self._archive_mode or not path:
+            return
+        node = self._find_by_path(self.invisibleRootItem(), os.path.abspath(path))
+        if node is None:
+            self.reveal(path)
+            return
+        expanded = {
+            node.child(i).text(0)
+            for i in range(node.childCount())
+            if node.child(i).isExpanded()
+        }
+        self._suppress = True
+        try:
+            node.takeChildren()
+            node.setData(0, _LOADED_ROLE, False)
+            self._populate(node)
+            for index in range(node.childCount()):
+                child = node.child(index)
+                if child.text(0) in expanded:
+                    child.setExpanded(True)
+        finally:
+            self._suppress = False
 
     def reveal(self, path: str) -> None:
         """Expand down to *path* and select it."""
@@ -211,11 +244,19 @@ class FolderTree(QTreeWidget):
             self.folderSelected.emit(path)
 
 
-def _has_subdirs(path: str) -> bool:
+def _has_subdirs(path: str, hidden: bool = False) -> bool:
+    """Is there anything below *path* worth an expander?
+
+    Asked the same way :meth:`FolderTree._populate` fills the branch
+    (symlinks followed), so a folder never offers a twisty that opens on
+    nothing, nor hides children it would happily list.
+    """
     try:
         with os.scandir(path) as it:
             for entry in it:
-                if entry.is_dir(follow_symlinks=False) and not entry.name.startswith("."):
+                if entry.name.startswith(".") and not hidden:
+                    continue
+                if entry.is_dir(follow_symlinks=True):
                     return True
     except OSError:
         return False

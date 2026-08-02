@@ -57,6 +57,8 @@ jobs:
           test -f "$HOME/.local/share/applications/linrar.desktop"
           test -f "$HOME/.local/share/icons/hicolor/48x48/apps/linrar.png"
           QT_QPA_PLATFORM=offscreen "$HOME/.local/bin/linrar" --version
+          QT_QPA_PLATFORM=offscreen "$HOME/.local/bin/linrar" -V
+          QT_QPA_PLATFORM=offscreen "$HOME/.local/bin/linrar" -h
           QT_QPA_PLATFORM=offscreen "$HOME/.local/bin/linrar" --self-test
           ./uninstall.sh -y
           test ! -e "$HOME/.local/bin/linrar"

@@ -114,6 +114,7 @@ class RarBackend(ArchiveBackend):
         password_repeat: int = 1,
         allowed: tuple[int, ...] = (EXIT_SUCCESS,),
         write_command: bool = False,
+        subject: str = "",
     ) -> ProcessRunner:
         """Run a rar/unrar command, streaming progress into *ctx*.
 
@@ -121,7 +122,7 @@ class RarBackend(ArchiveBackend):
         process table.  When no password is supplied, read commands get ``-p-``
         so the tool fails fast on an encrypted archive instead of blocking on a
         prompt.  Write commands must NOT receive ``-p-``: for ``rar a`` and
-        friends that switch does not mean "no password" — it silently encrypts
+        friends that switch does not mean "no password": it silently encrypts
         the archive with the literal password ``-``.  (This was the bug that
         made freshly created SFX archives demand a password.)  Since stdin is
         closed immediately, a write command that does decide to prompt simply
@@ -161,6 +162,9 @@ class RarBackend(ArchiveBackend):
                 code,
                 runner.output,
             )
+        # Before the generic wording: "not RAR archive" explains far more than
+        # "a fatal error occurred", whichever command produced it.
+        self._reject_non_archive(runner.output, subject)
         raise OperationError(
             self._error_message(code, runner.output), code, runner.output
         )
@@ -213,10 +217,42 @@ class RarBackend(ArchiveBackend):
         exe = self._require_unrar()
         argv = [exe, "-idc", "lt", path]
         runner = self._run(
-            argv, password, None, allowed=(EXIT_SUCCESS, EXIT_WARNING)
+            argv, password, None, allowed=(EXIT_SUCCESS, EXIT_WARNING),
+            subject=path,
         )
+        self._reject_non_archive(runner.output, path)
         info = self._parse_listing(runner.output, path)
+        # "unrar lt" answers a file that is not an archive at all with exit 0
+        # and one line of prose, so a listing with neither a header nor a
+        # member is a refusal rather than an empty archive.  Without this the
+        # window opens on a file that is not an archive and shows nothing,
+        # which reads as LinRAR doing nothing at all.
+        if not info.entries and "Archive: " not in runner.output:
+            raise OperationError(
+                f"{os.path.basename(path)} is not a RAR archive.",
+                EXIT_OPEN,
+                runner.output,
+            )
         return info
+
+    @staticmethod
+    def _reject_non_archive(output: str, path: str = "") -> None:
+        """Raise when unrar says the file is not an archive.
+
+        It says so on stdout and still exits 0 (for ``lt``) or 1 (for ``x``
+        and ``t``), all of which count as success, so the words have to be
+        read rather than the status.
+        """
+        for line in output.splitlines():
+            stripped = line.strip()
+            if "is not RAR archive" not in stripped:
+                continue
+            name = os.path.basename(path) if path else "This file"
+            raise OperationError(
+                f"{name} is not a RAR archive.\n\n{stripped}",
+                EXIT_OPEN,
+                output,
+            )
 
     @staticmethod
     def _parse_listing(output: str, path: str) -> ArchiveInfo:
@@ -365,15 +401,32 @@ class RarBackend(ArchiveBackend):
         argv.append(destination.rstrip("/") + "/")
 
         try:
-            self._run(
+            runner = self._run(
                 argv,
                 options.password,
                 ctx,
                 allowed=(EXIT_SUCCESS, EXIT_WARNING),
+                subject=path,
             )
         finally:
             if list_file:
                 _silent_unlink(list_file)
+
+        self._reject_non_archive(runner.output, path)
+        # "No files to extract" is a legitimate outcome for the update modes,
+        # which only write what is newer.  On a plain extraction it means the
+        # work silently did not happen, and saying so beats a progress bar
+        # that filled up and left an empty folder behind.
+        if (
+            options.update_mode is ExtractUpdateMode.EXTRACT_REPLACE
+            and "No files to extract" in runner.output
+        ):
+            raise OperationError(
+                "Nothing was extracted: the archive holds no files matching "
+                "what was asked for.",
+                EXIT_NO_FILES,
+                runner.output,
+            )
 
     def test(
         self,
@@ -382,7 +435,10 @@ class RarBackend(ArchiveBackend):
         ctx: Optional[TaskContext] = None,
     ) -> None:
         exe = self._require_unrar()
-        self._run([exe, "-idc", "t", "-y", path], password, ctx)
+        runner = self._run(
+            [exe, "-idc", "t", "-y", path], password, ctx, subject=path
+        )
+        self._reject_non_archive(runner.output, path)
 
     # -- creation ----------------------------------------------------------
 
@@ -725,7 +781,7 @@ class RarBackend(ArchiveBackend):
 
 #: The heading unrar 7 puts above the comment block; unrar 6 printed the
 #: comment bare.  It is not part of the comment and must not survive into the
-#: UI, nor into the next comment written back — that would grow a header line
+#: UI, nor into the next comment written back: that would grow a header line
 #: on every edit.  Matched exactly: a user comment whose own first line reads
 #: "Comment:" stays untouched, because losing a line of someone's text is
 #: worse than showing one stray heading.

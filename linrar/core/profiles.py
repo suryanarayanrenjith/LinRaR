@@ -1,4 +1,4 @@
-"""Compression profiles — WinRAR's saved sets of archiving parameters."""
+"""Compression profiles: WinRAR's saved sets of archiving parameters."""
 
 from __future__ import annotations
 
@@ -25,6 +25,7 @@ class Profile:
     recovery_record: bool = False
     recovery_percent: int = 3
     create_sfx: bool = False
+    sfx_format: str = ""
     delete_after: bool = False
     test_after: bool = False
     lock: bool = False
@@ -49,6 +50,7 @@ class Profile:
             recovery_record=self.recovery_record,
             recovery_percent=self.recovery_percent,
             create_sfx=self.create_sfx,
+            sfx_format=self.sfx_format,
             delete_after=self.delete_after,
             test_after=self.test_after,
             lock=self.lock,
@@ -73,6 +75,7 @@ class Profile:
             recovery_record=options.recovery_record,
             recovery_percent=options.recovery_percent,
             create_sfx=options.create_sfx,
+            sfx_format=options.sfx_format,
             delete_after=options.delete_after,
             test_after=options.test_after,
             lock=options.lock,
@@ -95,7 +98,9 @@ class Profile:
             parts.append(f"RR {self.recovery_percent}%")
         if self.volume_size:
             parts.append("split")
-        if self.create_sfx:
+        if self.sfx_format == "appimage":
+            parts.append("AppImage")
+        elif self.create_sfx or self.sfx_format == "rar":
             parts.append("SFX")
         return ", ".join(parts)
 

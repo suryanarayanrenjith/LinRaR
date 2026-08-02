@@ -222,7 +222,7 @@ class PasswordManagerDialog(QDialog):
             note = QLabel(
                 "No system keyring was found, so passwords are stored in "
                 "LinRAR's own settings file. They are obfuscated but "
-                "<b>not encrypted</b> — anyone who can read your home folder "
+                "<b>not encrypted</b>: anyone who can read your home folder "
                 "can recover them. Install 'libsecret-tools' (secret-tool) for "
                 "proper keyring storage."
             )
@@ -442,7 +442,7 @@ class PropertiesDialog(QDialog):
         archive: str = "",
     ) -> None:
         super().__init__(parent)
-        self.setWindowTitle(f"{name} — Properties")
+        self.setWindowTitle(f"{name} (Properties)")
         self.setWindowIcon(icons.icon("info"))
         self.resize(430, 380)
 

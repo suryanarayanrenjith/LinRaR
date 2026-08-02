@@ -40,10 +40,14 @@ from .. import icons, policy, theme
 APP_VERSION = "2.0.0"
 AUTHOR = "Surya"
 PORTFOLIO = "https://surya.is-a.dev/"
+#: LinRAR's own home on the web, and where its source lives.  Both are shown
+#: in About and are the two links the README points at.
+WEBSITE = "https://linrar.vercel.app/"
+REPOSITORY = "https://github.com/suryanarayanrenjith/LinRAR"
 
 
 class InfoDialog(QDialog):
-    """"Archive information" — WinRAR's Ctrl+I property sheet."""
+    """"Archive information": WinRAR's Ctrl+I property sheet."""
 
     def __init__(self, parent, info: ArchiveInfo) -> None:
         super().__init__(parent)
@@ -166,7 +170,7 @@ class ViewerDialog(QDialog):
 
 
 class FindDialog(QDialog):
-    """"Find files" — filters the current listing by a name mask."""
+    """"Find files": filters the current listing by a name mask."""
 
     def __init__(self, parent, in_archive: bool) -> None:
         super().__init__(parent)
@@ -342,7 +346,7 @@ class SettingsDialog(QDialog):
         grid.setVerticalSpacing(6)
         grid.setColumnStretch(1, 1)
 
-        heading = QLabel("Where LinRAR found it — or the path you want used")
+        heading = QLabel("Where LinRAR found it, or the path you want used")
         heading.setObjectName("Hint")
         grid.addWidget(heading, 0, 0, 1, 3)
 
@@ -365,7 +369,7 @@ class SettingsDialog(QDialog):
                 name.setObjectName("Warning")   # nothing to run for this one
 
             edit = QLineEdit(str(SETTINGS.get(f"paths/{key}") or ""))
-            edit.setPlaceholderText(found or "not found — install it or browse")
+            edit.setPlaceholderText(found or "not found: install it or browse")
             edit.setMinimumWidth(260)
             edit.setClearButtonEnabled(True)
             edit.setToolTip(
@@ -391,7 +395,7 @@ class SettingsDialog(QDialog):
                 self.locked.append(f"paths/{key}")
 
         note = QLabel(
-            "Empty means <b>search</b> — the PATH, then /usr/local/bin, "
+            "Empty means <b>search</b>: the PATH, then /usr/local/bin, "
             "/opt/rar, ~/.local/bin, /snap/bin, Flatpak and Nix profiles."
         )
         note.setWordWrap(True)
@@ -429,7 +433,7 @@ class SettingsDialog(QDialog):
         self.elevation_combo = QComboBox()
         self.elevation_combo.addItem("Automatic (recommended)", "auto")
         for method in elevation.METHODS:
-            label = method.label + ("" if method.path else "  — not installed")
+            label = method.label + ("" if method.path else "  (not installed)")
             self.elevation_combo.addItem(label, method.key)
             index = self.elevation_combo.count() - 1
             self.elevation_combo.model().item(index).setEnabled(
@@ -492,7 +496,7 @@ class SettingsDialog(QDialog):
         for path in system.files:
             count = list(system.origin.values()).count(path)
             lines.append(
-                f"<code>{path}</code> — {count} setting{'' if count == 1 else 's'}"
+                f"<code>{path}</code>: {count} setting{'' if count == 1 else 's'}"
             )
         for problem in system.problems:
             lines.append(f"<b>could not be read:</b> {problem}")
@@ -524,7 +528,7 @@ class SettingsDialog(QDialog):
                           ("sevenzip", "sevenzip"), ("zip", "zip")):
             found = tools.find(kind, str(SETTINGS.get(f"paths/{key}") or ""))
             edit = self.path_edits[key]
-            edit.setPlaceholderText(found or "not found — install it or browse")
+            edit.setPlaceholderText(found or "not found: install it or browse")
             name = self.path_labels[key]
             name.setObjectName("" if found else "Warning")
             name.style().unpolish(name)
@@ -533,13 +537,13 @@ class SettingsDialog(QDialog):
     def _reset_all(self) -> None:
         extra = (
             "\n\nThe settings your administrator applies to every user of this "
-            "machine stay in force — they are not yours to clear."
+            "machine stay in force; they are not yours to clear."
             if SETTINGS.system.active else ""
         )
         reply = QMessageBox.question(
             self,
             "Reset all settings",
-            "Forget every saved preference — theme, toolbar, layout, "
+            "Forget every saved preference: theme, toolbar, layout, "
             "compression and extraction defaults, favourites and history?\n\n"
             "Saved passwords and compression profiles go too. Your archives "
             "are untouched." + extra,
@@ -606,7 +610,7 @@ class AboutDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("About LinRAR")
         self.setWindowIcon(icons.icon("app"))
-        self.setFixedWidth(460)
+        self.setFixedWidth(500)
 
         colors = theme.current()
         layout = QVBoxLayout(self)
@@ -635,38 +639,39 @@ class AboutDialog(QDialog):
 
         layout.addWidget(_rule())
 
-        credits_box = QGroupBox("Credits")
-        credits_layout = QHBoxLayout(credits_box)
-        credits_layout.setSpacing(11)
-        badge = QLabel()
-        badge.setPixmap(icons.pixmap("globe", 32))
-        credits_layout.addWidget(badge, 0, Qt.AlignmentFlag.AlignVCenter)
-        credit = QLabel(
-            f"<div style='font-size:10pt'>UI built by <b>{AUTHOR}</b></div>"
-            f"<div style='margin-top:3px'><a href='{PORTFOLIO}' "
-            f"style='color:{colors.link}; text-decoration:none'>"
-            f"{PORTFOLIO}</a></div>"
-        )
-        credit.setOpenExternalLinks(True)
-        credit.setTextInteractionFlags(
-            Qt.TextInteractionFlag.TextBrowserInteraction
-        )
-        credits_layout.addWidget(credit, 1)
-        layout.addWidget(credits_box)
+        links_box = QGroupBox("Project")
+        links_layout = QVBoxLayout(links_box)
+        links_layout.setSpacing(5)
+        for caption, url in (
+            ("Website", WEBSITE),
+            ("Source code", REPOSITORY),
+            (f"Built by {AUTHOR}", PORTFOLIO),
+        ):
+            links_layout.addWidget(_link_row(caption, url, colors))
+        layout.addWidget(links_box)
 
         note = QLabel(
-            "RAR and UnRAR are Copyright (c) Alexander Roshal. This is an "
-            "independent front end and is not affiliated with win.rar GmbH."
+            "LinRAR is MIT licensed. RAR and UnRAR are Copyright (c) Alexander "
+            "Roshal; this is an independent front end and is not affiliated "
+            "with win.rar GmbH."
         )
         note.setObjectName("Hint")
         note.setWordWrap(True)
         layout.addWidget(note)
 
         row = QHBoxLayout()
-        visit = QPushButton("Visit portfolio")
+        visit = QPushButton("Website")
         visit.setIcon(icons.icon("globe"))
-        visit.clicked.connect(lambda: QDesktopServices.openUrl(QUrl(PORTFOLIO)))
+        visit.setToolTip(WEBSITE)
+        visit.clicked.connect(lambda: QDesktopServices.openUrl(QUrl(WEBSITE)))
         row.addWidget(visit)
+        source = QPushButton("GitHub")
+        source.setIcon(icons.icon("globe"))
+        source.setToolTip(REPOSITORY)
+        source.clicked.connect(
+            lambda: QDesktopServices.openUrl(QUrl(REPOSITORY))
+        )
+        row.addWidget(source)
         row.addStretch(1)
         ok = QPushButton("OK")
         ok.setDefault(True)
@@ -864,11 +869,29 @@ def _help_overview() -> str:
         "inside it and the window becomes an archive browser; the <b>..</b> row "
         "at the top steps back out again. The folder tree on the left follows "
         "whichever of the two you are looking at.</p>"
+        + "<p><b>Alt+Left</b> and <b>Alt+Right</b> are Back and Forward, "
+        "<b>Backspace</b> goes up, <b>Ctrl+L</b> lets you type a path, and "
+        "<b>F5</b> lists the folder again and clears any find filter.</p>"
+        + _section("When a file will not open")
+        + "<p>Archives are recognised by what is inside them rather than by "
+        "their names, so a file opens whatever it is called. When one cannot "
+        "be opened, LinRAR shows what it actually found: what the file is, "
+        "what its name claimed, which tool is needed and whether it is "
+        "installed, and the first bytes of the file, together with the things "
+        "you can do about it. The same report is available from a terminal "
+        "with <b>linrar -i FILE</b>.</p>"
         + _section("Creating an archive")
         + "<p>Select the files, press <b>Add</b> (Alt+A) and the <i>Archive "
         "name and parameters</i> dialog opens. Pick the format and compression "
         "method, optionally split the result into volumes, set a password, or "
         "save the whole set of choices as a profile for next time.</p>"
+        + "<p>Tick <b>Create SFX archive</b> there to get a self-extracting "
+        "one in the same step, and choose the kind beside it: an "
+        "<b>AppImage</b>, which unpacks itself on any Linux machine with "
+        "nothing installed, or rar's smaller <b>.sfx stub</b>. "
+        "<b>Options…</b> opens the full SFX module. An archive that already "
+        "exists is converted the same way from <b>Commands &gt; Convert "
+        "archive to SFX</b> (Alt+S).</p>"
         + _section("Extracting")
         + "<p><b>Extract To</b> (Alt+E) asks where the files should go and how "
         "to handle existing ones. <b>Alt+W</b> unpacks straight into the "
@@ -901,7 +924,7 @@ def _help_shortcuts() -> str:
                 ("Alt+I", "Archive information"),
                 ("Alt+R", "Repair the archive"),
                 ("Alt+P", "Add a recovery record"),
-                ("Alt+S", "Convert to a self-extracting AppImage"),
+                ("Alt+S", "Convert the archive to a self-extracting one"),
                 ("Alt+Q", "Convert archives to another format"),
                 ("Alt+G", "Generate a report of the contents"),
                 ("Del", "Delete the selection"),
@@ -914,7 +937,10 @@ def _help_shortcuts() -> str:
             [
                 ("Ctrl+O", "Open an archive"),
                 ("Ctrl+W", "Close the archive"),
+                ("Alt+Left / Alt+Right", "Back and forward"),
                 ("Backspace", "Up one level"),
+                ("Ctrl+L", "Type a path in the address bar"),
+                ("Ctrl+G", "Go to a folder"),
                 ("F5", "Refresh and clear any filter"),
                 ("Ctrl+F", "Find files"),
                 ("Ctrl+A", "Select everything"),
@@ -985,6 +1011,38 @@ def _help_formats() -> str:
         "manager. <b>Settings &gt; Tools and system</b> can point LinRAR at a "
         "specific binary if you keep several.</p>"
     )
+
+
+def _link_row(caption: str, url: str, colors) -> QWidget:
+    """A captioned, clickable link for the About window.
+
+    The scheme is dropped from what is shown (it is noise in a link nobody
+    has to type) while the anchor keeps the real address.
+    """
+    row = QWidget()
+    box = QHBoxLayout(row)
+    box.setContentsMargins(0, 0, 0, 0)
+    box.setSpacing(9)
+    badge = QLabel()
+    badge.setPixmap(icons.pixmap("globe", 16))
+    badge.setFixedWidth(20)
+    box.addWidget(badge, 0, Qt.AlignmentFlag.AlignVCenter)
+
+    shown = url.split("://", 1)[-1].rstrip("/")
+    label = QLabel(
+        f"<span style='color:{colors.text_dim}'>{caption}</span>"
+    )
+    label.setMinimumWidth(104)
+    box.addWidget(label, 0)
+    link = QLabel(
+        f"<a href='{url}' style='color:{colors.link}; text-decoration:none'>"
+        f"{shown}</a>"
+    )
+    link.setOpenExternalLinks(True)
+    link.setTextInteractionFlags(Qt.TextInteractionFlag.TextBrowserInteraction)
+    link.setToolTip(url)
+    box.addWidget(link, 1)
+    return row
 
 
 def _wrapped(text: str) -> QLabel:

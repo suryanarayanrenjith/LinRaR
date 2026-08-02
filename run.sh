@@ -13,7 +13,7 @@ if [ "$KERNEL" != "Linux" ]; then
 fi
 
 [ -x .venv/bin/python ] || {
-    printf 'No .venv here yet — run ./install.sh first.\n' >&2
+    printf 'No .venv here yet, run ./install.sh first.\n' >&2
     exit 1
 }
 exec .venv/bin/python -m linrar "$@"

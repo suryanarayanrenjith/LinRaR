@@ -488,7 +488,7 @@ class CustomizeDialog(QDialog):
 
 def _make_item(key: str, captions: dict[str, str]) -> QListWidgetItem:
     if key == _SEPARATOR:
-        item = QListWidgetItem("—  Separator  —")
+        item = QListWidgetItem("(Separator)")
     else:
         item = QListWidgetItem(icons.icon(_ICONS.get(key, "")), captions[key])
     item.setData(_KEY_ROLE, key)

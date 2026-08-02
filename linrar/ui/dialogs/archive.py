@@ -40,7 +40,9 @@ from ...core.models import (
 )
 from ...core.registry import REGISTRY
 from ...core.settings import SETTINGS
+from ...core.sfx import SfxOptions
 from .. import icons
+from . import sfx as sfx_dialog
 from .password import PasswordDialog
 
 _UNITS = [("B", 1), ("KB", 1024), ("MB", 1024**2), ("GB", 1024**3)]
@@ -58,7 +60,7 @@ _VOLUME_RE = re.compile(
 )
 
 # Extensions the name box swaps automatically when the format changes.
-_KNOWN_TARGET_EXTS = {".rar", ".zip", ".7z", ".sfx"}
+_KNOWN_TARGET_EXTS = {".rar", ".zip", ".7z", ".sfx", ".appimage"}
 
 
 class ArchiveDialog(QDialog):
@@ -81,6 +83,8 @@ class ArchiveDialog(QDialog):
         self.base_folder = base_folder
         self._password: Optional[str] = None
         self._encrypt_headers = False
+        #: Set once the user opens the SFX options; ``None`` means "defaults".
+        self._sfx_options: Optional[SfxOptions] = None
         # Radio buttons emit toggled() while the page is still being built, so
         # the sync handlers must stay inert until every widget exists.
         self._ready = False
@@ -148,6 +152,11 @@ class ArchiveDialog(QDialog):
         self.unit_combo.setCurrentText(
             str(SETTINGS.get("compression/volume_unit") or "MB")
         )
+        kind = self.sfx_combo.findData(
+            str(SETTINGS.get("compression/sfx_format") or sfx_dialog.APPIMAGE)
+        )
+        if kind >= 0:
+            self.sfx_combo.setCurrentIndex(kind)
         excludes = str(SETTINGS.get("compression/exclude") or "")
         if excludes:
             self.exclude_edit.setPlainText(excludes)
@@ -171,6 +180,7 @@ class ArchiveDialog(QDialog):
         SETTINGS.set("compression/store_paths", self.paths_check.isChecked())
         SETTINGS.set("compression/recurse", self.recurse_check.isChecked())
         SETTINGS.set("compression/volume_unit", self.unit_combo.currentText())
+        SETTINGS.set("compression/sfx_format", self.sfx_combo.currentData())
         SETTINGS.set(
             "compression/exclude", self.exclude_edit.toPlainText().strip()
         )
@@ -282,9 +292,33 @@ class ArchiveDialog(QDialog):
         self.recovery_check = QCheckBox("Add recovery record")
         self.test_check = QCheckBox("Test archived files")
         self.lock_check = QCheckBox("Lock archive")
+
+        options_layout.addWidget(self.delete_check)
+        options_layout.addWidget(self.sfx_check)
+        # Both kinds of self-extracting archive are offered right here, beside
+        # the box that turns them on: an AppImage used to be reachable only by
+        # creating a .rar first, opening it, and finding the SFX command.
+        sfx_row = QHBoxLayout()
+        sfx_row.setContentsMargins(18, 0, 0, 0)
+        sfx_row.setSpacing(5)
+        self.sfx_combo = QComboBox()
+        self.sfx_combo.addItem("AppImage", sfx_dialog.APPIMAGE)
+        self.sfx_combo.addItem("RAR .sfx stub", sfx_dialog.RAR_STUB)
+        self.sfx_combo.setToolTip(
+            "AppImage: one executable that unpacks itself anywhere.\n"
+            "RAR .sfx stub: rar's own smaller self-extracting shell script."
+        )
+        self.sfx_combo.currentIndexChanged.connect(self._on_sfx_kind_changed)
+        self.sfx_options_button = QPushButton("Options...")
+        self.sfx_options_button.setToolTip(
+            "Destination, commands to run, licence, icon and desktop entry"
+        )
+        self.sfx_options_button.clicked.connect(self._configure_sfx)
+        sfx_row.addWidget(self.sfx_combo, 1)
+        sfx_row.addWidget(self.sfx_options_button)
+        options_layout.addLayout(sfx_row)
+
         for check in (
-            self.delete_check,
-            self.sfx_check,
             self.solid_check,
             self.recovery_check,
             self.test_check,
@@ -440,7 +474,66 @@ class ArchiveDialog(QDialog):
 
     def _on_sfx_toggled(self, _checked: bool) -> None:
         if self._ready:
+            self._sync_sfx()
             self._retarget_extension(self.selected_format)
+
+    def _on_sfx_kind_changed(self, _index: int) -> None:
+        if self._ready:
+            self._sync_sfx()
+            self._retarget_extension(self.selected_format)
+
+    @property
+    def sfx_kind(self) -> str:
+        """"", ``"appimage"`` or ``"rar"``: what the OK button will produce."""
+        if not (self.sfx_check.isChecked() and self.sfx_check.isEnabled()):
+            return ""
+        return self.sfx_combo.currentData() or sfx_dialog.APPIMAGE
+
+    def sfx_options(self) -> SfxOptions:
+        """The AppImage settings, defaulted from this dialog when untouched."""
+        if self._sfx_options is not None:
+            return self._sfx_options
+        title = os.path.splitext(
+            os.path.basename(self.name_edit.text().strip())
+        )[0]
+        return SfxOptions(title=title or "Self-extracting archive")
+
+    def _sync_sfx(self) -> None:
+        """Keep the SFX row, and the options it rules out, consistent."""
+        active = self.sfx_kind
+        self.sfx_combo.setEnabled(bool(active))
+        self.sfx_options_button.setEnabled(active == sfx_dialog.APPIMAGE)
+        # An AppImage is one executable file, so it cannot also be split into
+        # volumes; say so by disabling the box rather than failing at the end.
+        appimage = active == sfx_dialog.APPIMAGE
+        allows_volumes = self.selected_format is not ArchiveFormat.ZIP
+        self.volume_combo.setEnabled(allows_volumes and not appimage)
+        self.unit_combo.setEnabled(allows_volumes and not appimage)
+        if appimage:
+            self.volume_combo.setCurrentText("")
+            self.volume_combo.setToolTip(
+                "An AppImage is a single file, so it cannot be split into "
+                "volumes."
+            )
+        else:
+            self.volume_combo.setToolTip("")
+
+    def _configure_sfx(self) -> None:
+        """Open the SFX dialog for the AppImage settings."""
+        dialog = sfx_dialog.SfxDialog(
+            self,
+            archive_path=self.name_edit.text().strip(),
+            sfx_format=self.sfx_kind or sfx_dialog.APPIMAGE,
+        )
+        if dialog.exec() != sfx_dialog.SfxDialog.DialogCode.Accepted:
+            return
+        # The dialog can change the format too, so the row follows it.
+        index = self.sfx_combo.findData(dialog.sfx_format)
+        if index >= 0:
+            self.sfx_combo.setCurrentIndex(index)
+        self._sfx_options = (
+            dialog.options() if dialog.sfx_format == sfx_dialog.APPIMAGE else None
+        )
 
     def _on_method_changed(self, _index: int) -> None:
         if self._ready:
@@ -463,8 +556,6 @@ class ArchiveDialog(QDialog):
         self.sfx_check.setEnabled(is_rar)
         self.recovery_spin.setEnabled(is_rar)
         self.dictionary_combo.setEnabled(not is_zip)
-        self.volume_combo.setEnabled(fmt is not ArchiveFormat.ZIP)
-        self.unit_combo.setEnabled(fmt is not ArchiveFormat.ZIP)
         for widget in (
             self.recovery_check,
             self.lock_check,
@@ -472,6 +563,8 @@ class ArchiveDialog(QDialog):
         ):
             if not widget.isEnabled():
                 widget.setChecked(False)
+        # Owns the volume boxes too: an AppImage rules them out.
+        self._sync_sfx()
 
         # RAR and ZIP honour every update mode; 7z always adds-and-replaces.
         self.update_combo.setEnabled(is_rar or is_zip)
@@ -494,7 +587,10 @@ class ArchiveDialog(QDialog):
     def _expected_extension(self, fmt: ArchiveFormat) -> str:
         """The extension the current format (and SFX option) calls for."""
         if fmt in (ArchiveFormat.RAR5, ArchiveFormat.RAR4):
-            return ".sfx" if self.sfx_check.isChecked() else ".rar"
+            kind = self.sfx_kind
+            if kind == sfx_dialog.APPIMAGE:
+                return ".AppImage"
+            return ".sfx" if kind == sfx_dialog.RAR_STUB else ".rar"
         return {
             ArchiveFormat.ZIP: ".zip",
             ArchiveFormat.SEVENZIP: ".7z",
@@ -507,7 +603,7 @@ class ArchiveDialog(QDialog):
             return
         wanted = self._expected_extension(fmt)
         stem, ext = os.path.splitext(name)
-        if ext.lower() == wanted:
+        if ext.lower() == wanted.lower():
             return
         if ext.lower() in _KNOWN_TARGET_EXTS:
             self.name_edit.setText(stem + wanted)
@@ -637,7 +733,11 @@ class ArchiveDialog(QDialog):
             profile.recovery_record and self.recovery_check.isEnabled()
         )
         self.recovery_spin.setValue(profile.recovery_percent)
-        self.sfx_check.setChecked(profile.create_sfx and self.sfx_check.isEnabled())
+        kind = profile.sfx_format or ("rar" if profile.create_sfx else "")
+        index = self.sfx_combo.findData(kind)
+        if index >= 0:
+            self.sfx_combo.setCurrentIndex(index)
+        self.sfx_check.setChecked(bool(kind) and self.sfx_check.isEnabled())
         self.delete_check.setChecked(profile.delete_after)
         self.test_check.setChecked(profile.test_after)
         self.lock_check.setChecked(profile.lock and self.lock_check.isEnabled())
@@ -704,6 +804,18 @@ class ArchiveDialog(QDialog):
             )
             self.tabs.setCurrentIndex(3)
             return
+        if self.sfx_kind == sfx_dialog.APPIMAGE:
+            ready, why = sfx_dialog.appimage_ready()
+            if not ready:
+                QMessageBox.warning(
+                    self,
+                    "LinRAR",
+                    f"An AppImage cannot be built on this system.\n\n{why}\n\n"
+                    "Choose the RAR .sfx stub instead, or install the missing "
+                    "package from the Dependencies manager.",
+                )
+                self.tabs.setCurrentIndex(0)
+                return
         if self._volume_bytes() is None:
             QMessageBox.warning(
                 self,
@@ -761,7 +873,10 @@ class ArchiveDialog(QDialog):
             volume_size=self._volume_bytes() or 0,
             update_mode=self.update_combo.currentData() or UpdateMode.ADD_REPLACE,
             delete_after=self.delete_check.isChecked(),
-            create_sfx=self.sfx_check.isChecked(),
+            # An AppImage wraps a finished RAR archive, so rar itself is asked
+            # for a plain one; only the stub is its own -sfx switch.
+            create_sfx=self.sfx_kind == sfx_dialog.RAR_STUB,
+            sfx_format=self.sfx_kind,
             solid=self.solid_check.isChecked(),
             recovery_record=self.recovery_check.isChecked(),
             recovery_percent=self.recovery_spin.value(),

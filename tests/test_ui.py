@@ -31,11 +31,31 @@ check("zip->7z ext", d.name_edit.text().endswith("test.7z"), d.name_edit.text())
 d._format_buttons[ArchiveFormat.RAR5].setChecked(True)
 check("7z->rar ext", d.name_edit.text().endswith("test.rar"), d.name_edit.text())
 
-# SFX checkbox drives the extension too
+# The SFX checkbox drives the extension, and so does the kind beside it.
+# Set explicitly rather than trusting the remembered default: this file runs
+# against the real settings.
+from linrar.core.sfx import APPIMAGE, RAR_STUB
+
+d.sfx_combo.setCurrentIndex(d.sfx_combo.findData(APPIMAGE))
 d.sfx_check.setChecked(True)
-check("sfx ext on", d.name_edit.text().endswith("test.sfx"), d.name_edit.text())
+check("sfx kind reported", d.sfx_kind == APPIMAGE, d.sfx_kind)
+check("sfx ext on (AppImage)", d.name_edit.text().endswith("test.AppImage"),
+      d.name_edit.text())
+check("an AppImage cannot be split", not d.volume_combo.isEnabled())
+d.sfx_combo.setCurrentIndex(d.sfx_combo.findData(RAR_STUB))
+check("sfx kind follows the combo", d.sfx_kind == RAR_STUB, d.sfx_kind)
+check("sfx ext for the rar stub", d.name_edit.text().endswith("test.sfx"),
+      d.name_edit.text())
+check("the stub can still be split", d.volume_combo.isEnabled())
+check("only the stub is rar's own -sfx",
+      d.options().create_sfx and d.options().sfx_format == RAR_STUB)
+d.sfx_combo.setCurrentIndex(d.sfx_combo.findData(APPIMAGE))
+check("an AppImage asks rar for a plain archive",
+      not d.options().create_sfx and d.options().sfx_format == APPIMAGE)
 d.sfx_check.setChecked(False)
 check("sfx ext off", d.name_edit.text().endswith("test.rar"), d.name_edit.text())
+check("no sfx kind when off", d.sfx_kind == "", d.sfx_kind)
+check("volumes available again", d.volume_combo.isEnabled())
 
 # switching to ZIP disables (and unchecks) SFX, and retargets
 d.sfx_check.setChecked(True)

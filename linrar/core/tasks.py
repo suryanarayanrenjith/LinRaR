@@ -3,7 +3,7 @@
 Every archive operation can take minutes, so it runs on a :class:`QThread` and
 reports progress through signals.  Backends receive a :class:`TaskContext` whose
 callbacks emit those signals, which Qt delivers to the GUI thread as queued
-connections — no widget is ever touched from the worker.
+connections, so no widget is ever touched from the worker.
 """
 
 from __future__ import annotations

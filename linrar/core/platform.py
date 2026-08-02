@@ -119,7 +119,7 @@ def warning() -> str:
 def ensure_supported(stream: TextIO | None = None) -> None:
     """Refuse to go any further unless this is Linux.
 
-    Raises :class:`SystemExit` so it can guard a module body — the point is to
+    Raises :class:`SystemExit` so it can guard a module body: the point is to
     stop before the graphical stack is even imported.
     """
     message = problem()

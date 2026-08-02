@@ -1,7 +1,7 @@
 """Persisted application preferences, kept in readable INI files.
 
-Every choice the user makes — theme, toolbar contents, view mode, layout,
-compression and extraction defaults, favourites, history, tool paths — is
+Every choice the user makes (theme, toolbar contents, view mode, layout,
+compression and extraction defaults, favourites, history, tool paths) is
 written to a single file and read back on the next launch:
 
     ``$XDG_CONFIG_HOME/LinRAR/linrar.conf``  (usually
@@ -31,7 +31,7 @@ The system layer may also *lock* keys, through a ``[policy]`` section:
     locked=view/theme, paths/*
 
 A locked key keeps the value the administrator chose, is never written back to
-the user's file, and shows up disabled — with the reason — everywhere it can be
+the user's file, and shows up disabled (with the reason) everywhere it can be
 edited in the interface.  Window geometry and the file's own bookkeeping
 (``geometry/*``, ``meta/*``) are deliberately outside the administrator's
 reach: locking them would freeze the window layout rather than a preference.
@@ -121,6 +121,9 @@ DEFAULTS: dict[str, Any] = {
     "compression/store_paths": True,
     "compression/recurse": True,
     "compression/volume_unit": "MB",
+    # "appimage" or "rar": which kind of self-extracting archive the SFX box
+    # on the archive dialog produces.
+    "compression/sfx_format": "appimage",
     "compression/exclude": "",
     # -- extraction defaults --
     "extract/overwrite": "ask",
@@ -251,8 +254,8 @@ class SystemConfig:
                 self.problems.append(f"{path}: permission denied")
                 continue
             if status != QSettings.Status.NoError:
-                # Usually one stray line.  Keep whatever did parse — dropping
-                # the file whole would silently ignore an administrator — but
+                # Usually one stray line.  Keep whatever did parse: dropping
+                # the file whole would silently ignore an administrator, but
                 # say so, loudly, in --config-info and in the Settings dialog.
                 self.problems.append(
                     f"{path}: not valid INI in places; only comments starting "
@@ -292,7 +295,7 @@ class SystemConfig:
         return any(fnmatch.fnmatchcase(key, pattern) for pattern in self.patterns)
 
     def locked_keys(self) -> list[str]:
-        """Known keys the policy locks — patterns resolved against DEFAULTS."""
+        """Known keys the policy locks: patterns resolved against DEFAULTS."""
         known = set(DEFAULTS) | set(self.values)
         return sorted(key for key in known if self.is_locked(key))
 
@@ -369,7 +372,7 @@ class Settings:
     def reset_all(self) -> None:
         """Forget everything the user chose.
 
-        The system-wide layer is untouched — it is not this user's to clear —
+        The system-wide layer is untouched (it is not this user's to clear),
         so the next read of each key returns the administrator's value, or the
         built-in default where there is none.
         """

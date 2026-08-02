@@ -1,4 +1,4 @@
-"""Archive format conversion — WinRAR's Tools > Convert archives.
+"""Archive format conversion: WinRAR's Tools > Convert archives.
 
 Conversion is unpack-then-repack: there is no format-to-format transcoder, so
 each archive is extracted to a private temporary folder and rebuilt in the

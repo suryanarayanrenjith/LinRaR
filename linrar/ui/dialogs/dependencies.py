@@ -83,7 +83,7 @@ class DependenciesDialog(QDialog):
             manager_text = f"<b>Package manager:</b> {self.manager.label}"
         else:
             manager_text = (
-                "<b>Package manager:</b> not detected — install the tools "
+                "<b>Package manager:</b> not detected; install the tools "
                 "manually."
             )
         manager_label = QLabel(manager_text)

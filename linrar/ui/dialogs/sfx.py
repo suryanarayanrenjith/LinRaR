@@ -1,4 +1,13 @@
-"""The "Advanced SFX options" dialog, targeting AppImage output."""
+"""The "Self-extracting archive" dialog: both output formats in one place.
+
+WinRAR has one SFX module and one dialog for it.  Linux has two sensible
+answers: an **AppImage**, which is the single double-clickable executable
+WinRAR's ``.exe`` is the Windows equivalent of, and rar's own tiny ``.sfx``
+shell stub.  Both are offered here rather than as two commands the user has
+to know the difference between before choosing.  The same dialog serves
+*Commands → Convert archive to SFX* and the **SFX options…** button on the
+"Archive name and parameters" dialog.
+"""
 
 from __future__ import annotations
 
@@ -25,23 +34,37 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from ...core.sfx import SfxOptions, appimage_ready, runtime_arch
+from ...core.sfx import (
+    APPIMAGE,
+    RAR_STUB,
+    SfxOptions,
+    appimage_ready,
+    runtime_arch,
+)
 from .. import icons
 
 
 class SfxDialog(QDialog):
-    """Collects every option for a self-extracting AppImage.
+    """Chooses the self-extracting format and collects its options.
 
     Mirrors WinRAR's SFX module configuration, with the Windows-only pages
-    (registry keys, shortcuts) replaced by their Linux equivalents.
+    (registry keys, shortcuts) replaced by their Linux equivalents.  The option
+    pages describe the AppImage; rar's ``.sfx`` stub takes no configuration at
+    all, so choosing it simply puts them out of the way.
     """
 
-    def __init__(self, parent=None, archive_path: str = "") -> None:
+    def __init__(
+        self,
+        parent=None,
+        archive_path: str = "",
+        sfx_format: str = APPIMAGE,
+        allow_stub: bool = True,
+    ) -> None:
         super().__init__(parent)
-        self.setWindowTitle("Advanced SFX options")
+        self.setWindowTitle("Self-extracting archive")
         self.setWindowIcon(icons.icon("sfx"))
         self.setModal(True)
-        self.resize(560, 500)
+        self.resize(580, 540)
 
         self.archive_path = archive_path
         self._icon_png: Optional[bytes] = None
@@ -50,7 +73,7 @@ class SfxDialog(QDialog):
         root.setContentsMargins(10, 10, 10, 10)
         root.setSpacing(8)
 
-        root.addWidget(self._build_header())
+        root.addWidget(self._build_header(allow_stub))
 
         self.tabs = QTabWidget()
         self.tabs.addTab(self._build_general(), "General")
@@ -60,6 +83,10 @@ class SfxDialog(QDialog):
         self.tabs.addTab(self._build_license(), "License")
         self.tabs.addTab(self._build_advanced(), "Advanced")
         root.addWidget(self.tabs, 1)
+
+        if sfx_format == RAR_STUB and allow_stub:
+            self.stub_radio.setChecked(True)
+        self._on_format_changed()
 
         buttons = QHBoxLayout()
         buttons.addStretch(1)
@@ -76,20 +103,29 @@ class SfxDialog(QDialog):
 
     # -- header ------------------------------------------------------------
 
-    def _build_header(self) -> QGroupBox:
-        group = QGroupBox("Output format")
+    def _build_header(self, allow_stub: bool) -> QGroupBox:
+        group = QGroupBox("Self-extracting format")
         box = QVBoxLayout(group)
         box.setSpacing(3)
-        box.addWidget(
-            QLabel(
-                "<b>AppImage</b> — a single executable file that unpacks itself "
-                "when run, the Linux equivalent of a Windows SFX .exe."
-            )
+
+        self.format_group = QButtonGroup(self)
+        self.appimage_radio = QRadioButton(
+            "AppImage: one executable file that unpacks itself when run"
         )
+        self.appimage_radio.setChecked(True)
+        self.stub_radio = QRadioButton(
+            "RAR .sfx stub: rar's own small self-extracting shell script"
+        )
+        for button in (self.appimage_radio, self.stub_radio):
+            self.format_group.addButton(button)
+            box.addWidget(button)
+            button.toggled.connect(self._on_format_changed)
+        self.stub_radio.setVisible(allow_stub)
+
         ready, note = appimage_ready()
         # Qt only treats a label as rich text when it contains a tag, so plain
         # entities like &nbsp; would show up literally.
-        label = QLabel(
+        self.state_label = QLabel(
             f"<span>Architecture: {runtime_arch()} &nbsp;•&nbsp; </span>"
             + (
                 note
@@ -97,10 +133,31 @@ class SfxDialog(QDialog):
                 else f"<span style='color:#B00020'>{note}</span>"
             )
         )
-        label.setWordWrap(True)
-        label.setObjectName("Hint")
-        box.addWidget(label)
+        self.state_label.setWordWrap(True)
+        self.state_label.setObjectName("Hint")
+        box.addWidget(self.state_label)
         return group
+
+    def _on_format_changed(self, _checked: bool = False) -> None:
+        """The stub takes no options, so its pages simply go away."""
+        appimage = self.sfx_format == APPIMAGE
+        self.tabs.setEnabled(appimage)
+        if appimage:
+            ready, note = appimage_ready()
+            self.state_label.setText(
+                f"<span>Architecture: {runtime_arch()} &nbsp;•&nbsp; </span>"
+                + (note if ready else f"<span style='color:#B00020'>{note}</span>")
+            )
+        else:
+            self.state_label.setText(
+                "<span>Runs on any Linux machine with a shell; needs no extra "
+                "tools to build, and takes no options.</span>"
+            )
+
+    @property
+    def sfx_format(self) -> str:
+        """Which kind of self-extracting archive the user chose."""
+        return RAR_STUB if self.stub_radio.isChecked() else APPIMAGE
 
     # -- tabs --------------------------------------------------------------
 
@@ -319,18 +376,25 @@ class SfxDialog(QDialog):
         QMessageBox.information(
             self,
             "Help",
-            "Advanced SFX options\n\n"
-            "LinRAR turns the archive into an AppImage: one executable file "
-            "that unpacks itself when run, with no installation needed.\n\n"
-            "The recipient can also drive it from a terminal:\n"
+            "Self-extracting archive\n\n"
+            "AppImage: one executable file that unpacks itself when run, with "
+            "nothing to install. The unrar extractor is bundled inside, so it "
+            "works even on a machine with no RAR tools. This is the Linux "
+            "equivalent of WinRAR's self-extracting .exe, and it is the one "
+            "that takes all the options in this window.\n\n"
             "    ./Archive.AppImage --help\n"
             "    ./Archive.AppImage -d ~/somewhere --silent\n"
             "    ./Archive.AppImage --list\n\n"
-            "The unrar extractor is bundled inside, so the archive unpacks "
-            "even on a machine with no RAR tools installed.",
+            "RAR .sfx stub: rar's own small self-extracting shell script. It "
+            "is smaller and needs no extra tools to build, but it takes no "
+            "options and expects a shell on the target machine.",
         )
 
     def _accept(self) -> None:
+        if self.sfx_format == RAR_STUB:
+            # The stub carries no configuration; nothing to validate.
+            self.accept()
+            return
         if self.desktop_check.isChecked() and not self.desktop_exec_edit.text().strip():
             QMessageBox.warning(
                 self,

@@ -190,7 +190,7 @@ DEPENDENCIES: list[Dependency] = [
                    "repository.",
             "dnf": "Provided by RPM Fusion (nonfree); that repository must be "
                    "enabled.",
-            "pacman": "Not in the official repositories — install 'rar' from "
+            "pacman": "Not in the official repositories: install 'rar' from "
                       "the AUR, for example: yay -S rar",
             "xbps": "Not packaged for Void; install RARLAB's binary manually.",
         },
@@ -237,7 +237,7 @@ DEPENDENCIES: list[Dependency] = [
         name="SquashFS tools",
         description=(
             "Builds the self-extracting AppImages produced by "
-            "Commands > Convert to AppImage."
+            "Commands > Convert archive to SFX."
         ),
         binaries=("mksquashfs",),
         packages={
@@ -375,7 +375,7 @@ def dependency_status(dependency: Dependency) -> DependencyStatus:
     """Where this tool is, asked exactly the way the backends ask it.
 
     Using ``shutil.which`` here instead would let the manager report "Missing"
-    for a tool LinRAR is quite happily running — one installed in /opt/rar or a
+    for a tool LinRAR is quite happily running: one installed in /opt/rar or a
     Nix profile, say, which :mod:`linrar.core.tools` finds and PATH does not.
     """
     from . import tools

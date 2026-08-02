@@ -1,9 +1,9 @@
-"""Stored passwords — WinRAR's "Organize passwords".
+"""Stored passwords: WinRAR's "Organize passwords".
 
 Where the desktop provides a secret service (GNOME Keyring, KWallet via
 libsecret), passwords are stored there and never touch our own configuration.
 Only when no keyring is reachable do we fall back to local storage, and that
-fallback is *obfuscated, not encrypted* — the UI says so plainly rather than
+fallback is *obfuscated, not encrypted*: the UI says so plainly rather than
 implying a guarantee we cannot make.
 """
 

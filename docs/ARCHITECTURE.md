@@ -16,7 +16,8 @@ linrar/               the application
 │   │   ├── rar.py    rar + unrar (the primary backend)
 │   │   ├── zip.py    in-process ZIP via zipfile
 │   │   └── sevenzip.py  7z for every other format
-│   ├── registry.py   content sniffing, format → backend
+│   ├── registry.py   content sniffing, format → backend, volume naming
+│   ├── diagnose.py   why a file would not open, in words worth reading
 │   ├── tools.py      finding rar/unrar/7z/zip wherever a distro puts them
 │   ├── elevation.py  pkexec / sudo / doas, with a held authorisation
 │   ├── packages.py   distribution and package-manager detection
@@ -46,6 +47,27 @@ run.sh                run from the source tree without installing
 ```
 
 ## Things worth knowing
+
+**A failure is a report, not a sentence.** `core/diagnose.py` inspects the path
+itself — kind, size, permissions, leading bytes, what the name claimed, the
+volume it belongs to, the tool the format needs — and returns a `Problem` with
+a headline, an explanation, a fact table, suggestions, technical detail and a
+list of *action keys*. `ui/dialogs/problem.py` renders it and offers only the
+actions the caller can carry out, so one table of handlers in `MainWindow`
+serves every call site. Nothing in `diagnose.py` imports Qt, which is what lets
+`linrar --inspect` print the same report from a terminal.
+
+**Exit status is not the same as success.** `unrar lt` says "…is not RAR
+archive" on stdout and exits 0; `x` and `t` say it and exit 1, which is
+`EXIT_WARNING`. All three used to count as success, so a text file named `.rar`
+opened an empty archive window and extracting it produced nothing at all. The
+rar backend now reads the answer as well as the status.
+
+**Names are a hint; contents are the answer.** `detect_format_source()` reports
+*how* a format was decided — `content`, `sfx` or `name` — and only the first
+two are treated as proof. Everything still *tries* a file that merely looks
+like an archive (some old tar variants carry no signature at all), but nothing
+tells the user a renamed text file is a RAR archive.
 
 **Settings are three layers, not one file.** `DEFAULTS` in `settings.py`, then
 whatever `/etc/linrar/linrar.conf` and its `conf.d` drop-ins say, then the

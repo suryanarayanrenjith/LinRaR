@@ -45,8 +45,13 @@ from ..core.models import (
 )
 from ..core import sfx
 from ..core.profiles import PROFILES, Profile
-from ..core import elevation, packages
-from ..core.registry import REGISTRY, detect_format, looks_like_archive
+from ..core import diagnose, elevation, packages
+from ..core.registry import (
+    REGISTRY,
+    detect_format,
+    first_volume,
+    looks_like_archive,
+)
 from ..core.settings import DEFAULT_TOOLBAR, SETTINGS
 from ..core.tasks import Task
 from . import icons, policy, theme
@@ -76,6 +81,7 @@ from .dialogs.misc import (
     ViewerDialog,
 )
 from .dialogs.password import PasswordDialog
+from .dialogs.problem import ProblemDialog
 from .dialogs.progress import ProgressDialog
 from . import filelist
 from .filelist import FileBrowser, FileListModel, ListingItem
@@ -104,6 +110,8 @@ TOOLBAR_CATALOGUE: list[tuple[str, str, str]] = [
     ("report", "act_report", "Report"),
     ("open", "act_open", "Open"),
     ("close", "act_close", "Close"),
+    ("back", "act_back", "Back"),
+    ("forward", "act_forward", "Forward"),
     ("up", "act_up", "Up"),
     ("refresh", "act_refresh", "Refresh"),
     ("new_folder", "act_new_folder", "New Folder"),
@@ -134,6 +142,12 @@ TOOLBAR_STYLE_LABELS = {
 }
 TOOLBAR_ICON_SIZES = (16, 24, 32, 48)
 
+#: How many folders Back remembers, and how many folders keep a remembered
+#: cursor position.  Both are bounded so a long session cannot grow without
+#: limit; both are far more than anybody walks back through by hand.
+_HISTORY_DEPTH = 64
+_SELECTION_MEMORY = 200
+
 
 class MainWindow(QMainWindow):
     """The application shell: a disk browser that turns into an archive browser."""
@@ -159,6 +173,15 @@ class MainWindow(QMainWindow):
         self._temp_dirs: list[str] = []
         self._pending_cut: list[str] = []
         self._pending_profile: Optional[Profile] = None
+        # -- navigation --
+        self._back: list[str] = []
+        self._forward: list[str] = []
+        #: folder -> the row that was current there, so stepping back into a
+        #: folder puts the cursor where it was rather than at the top.
+        self._selection_memory: dict[str, str] = {}
+        #: The disk tree is built once and revealed thereafter; rebuilding it
+        #: on every folder change would collapse everything the user opened.
+        self._tree_ready = False
 
         # The body must exist before the menus: the file-list and column menus
         # are built from the live view.
@@ -259,12 +282,8 @@ class MainWindow(QMainWindow):
             "Add a recovery record so damage can be repaired",
         )
         self.act_sfx = self._act(
-            "Convert to &AppImage (SFX)", "sfx", "Alt+S", self.cmd_sfx,
-            "Build a self-extracting, self-running AppImage",
-        )
-        self.act_sfx_stub = self._act(
-            "Convert to RAR .sfx stub", "sfx", "", self.cmd_sfx_stub,
-            "Use rar's own Linux self-extracting stub instead of an AppImage",
+            "Convert archive to &SFX", "sfx", "Alt+S", self.cmd_sfx,
+            "Make the archive self-extracting: an AppImage or a RAR .sfx stub",
         )
         self.act_help_topics = self._act(
             "&Help topics", "help", "F1", self.cmd_help_topics,
@@ -277,10 +296,6 @@ class MainWindow(QMainWindow):
             "&Lock archive", "lock", "", self.cmd_lock,
             "Prevent any further changes to the archive",
         )
-        self.act_convert = self._act(
-            "Con&vert archive", "convert", "", self.cmd_convert,
-            "Rebuild the archive in another format",
-        )
         self.act_password = self._act(
             "Set defau&lt password", "key", "Ctrl+P", self.cmd_password,
         )
@@ -290,7 +305,22 @@ class MainWindow(QMainWindow):
         )
         self.act_close = self._act("&Close archive", "", "Ctrl+W", self.close_archive)
         self.act_up = self._act("&Up one level", "up", "Backspace", self.go_up)
-        self.act_refresh = self._act("&Refresh", "refresh", "F5", self.refresh)
+        self.act_back = self._act(
+            "&Back", "back", "Alt+Left", self.go_back,
+            "Return to the folder you came from",
+        )
+        self.act_forward = self._act(
+            "&Forward", "forward", "Alt+Right", self.go_forward,
+            "Go forward again after stepping back",
+        )
+        self.act_refresh = self._act(
+            "&Refresh", "refresh", "F5", self.refresh,
+            "List the folder again and clear any find filter",
+        )
+        self.act_focus_address = self._act(
+            "Go to &address bar", "", "Ctrl+L", self.cmd_focus_address,
+            "Type a path to go to",
+        )
         self.act_select_all = self._act(
             "Select &all", "", "Ctrl+A", self.cmd_select_all
         )
@@ -481,12 +511,17 @@ class MainWindow(QMainWindow):
         file_menu.addAction(self.act_open)
         file_menu.addAction(self.act_close)
         file_menu.addSeparator()
+        file_menu.addAction(self.act_back)
+        file_menu.addAction(self.act_forward)
         file_menu.addAction(self.act_up)
         file_menu.addAction(self.act_refresh)
+        # Ctrl+D belongs to "Add to favorites", as it does in WinRAR; two
+        # actions sharing a shortcut means Qt fires neither of them.
         self.act_change_folder = self._act(
-            "Change &folder...", "disk", "Ctrl+D", self.cmd_change_folder
+            "&Go to folder...", "disk", "Ctrl+G", self.cmd_change_folder
         )
         file_menu.addAction(self.act_change_folder)
+        file_menu.addAction(self.act_focus_address)
         file_menu.addSeparator()
         file_menu.addAction(self.act_select_all)
         file_menu.addAction(self.act_select_group)
@@ -498,6 +533,9 @@ class MainWindow(QMainWindow):
         file_menu.addSeparator()
         file_menu.addAction(self.act_exit)
 
+        # Commands: what can be done to the archive or the selection, in
+        # WinRAR's order.  Every entry appears in exactly one menu: a command
+        # offered twice reads as two different commands.
         commands = bar.addMenu("&Commands")
         for action in (
             self.act_add,
@@ -527,25 +565,24 @@ class MainWindow(QMainWindow):
         ):
             commands.addAction(action)
         commands.addSeparator()
-        protect_menu = commands.addMenu(icons.icon("protect"), "Protect and repair")
-        protect_menu.menuAction().setProperty("iconName", "protect")
-        protect_menu.addAction(self.act_protect)
-        protect_menu.addAction(self.act_recovery_volumes)
-        protect_menu.addAction(self.act_reconstruct)
-        protect_menu.addAction(self.act_repair)
-        protect_menu.addAction(self.act_lock)
+        commands.addAction(self.act_protect)
+        commands.addAction(self.act_lock)
         commands.addAction(self.act_sfx)
-        commands.addAction(self.act_sfx_stub)
+        volume_menu = commands.addMenu(icons.icon("protect"), "&Volumes")
+        volume_menu.menuAction().setProperty("iconName", "protect")
+        volume_menu.addAction(self.act_recovery_volumes)
+        volume_menu.addAction(self.act_reconstruct)
 
+        # Tools: what is done to archives from the outside, in bulk, or to
+        # LinRAR itself.
         tools = bar.addMenu("&Tools")
         tools.addAction(self.act_wizard)
         tools.addSeparator()
         tools.addAction(self.act_convert_archives)
-        tools.addAction(self.act_report)
         tools.addAction(self.act_repair)
+        tools.addAction(self.act_report)
         tools.addSeparator()
         tools.addAction(self.act_passwords)
-        tools.addAction(self.act_profiles)
         tools.addSeparator()
         tools.addAction(self.act_benchmark)
         tools.addAction(self.act_dependencies)
@@ -555,8 +592,8 @@ class MainWindow(QMainWindow):
 
         options = bar.addMenu("&Options")
         options.addAction(self.act_settings)
-        options.addAction(self.act_customize)
         options.addAction(self.act_profiles)
+        options.addAction(self.act_customize)
         options.addSeparator()
 
         view_menu = options.addMenu("&File list")
@@ -750,7 +787,7 @@ class MainWindow(QMainWindow):
         self.act_dependencies.setIcon(icons.icon(icon_name))
         self.act_dependencies.setProperty("iconName", icon_name)
         self.act_dependencies.setToolTip(
-            "Missing: " + ", ".join(missing) + " — click to install"
+            "Missing: " + ", ".join(missing) + ", click to install"
             if missing
             else "Install or remove the command line tools LinRAR uses"
         )
@@ -875,18 +912,24 @@ class MainWindow(QMainWindow):
     def in_archive(self) -> bool:
         return self.archive_path is not None
 
-    def navigate_to(self, folder: str) -> None:
-        """Show a folder on disk, leaving archive mode if we were in one."""
-        folder = os.path.abspath(os.path.expanduser(folder))
-        if not os.path.isdir(folder):
-            QMessageBox.warning(self, "LinRAR", f"The folder does not exist:\n{folder}")
-            return
-        if not os.access(folder, os.R_OK | os.X_OK):
-            QMessageBox.warning(
-                self, "LinRAR", f"You do not have permission to open:\n{folder}"
-            )
-            return
+    def navigate_to(self, folder: str, select: str = "", record: bool = True) -> bool:
+        """Show a folder on disk, leaving archive mode if we were in one.
 
+        *select* names the row to put the cursor on once the listing is up:
+        most usefully, the folder just stepped out of.  *record* is what Back
+        and Forward turn off so that walking the history does not rewrite it.
+        """
+        folder = os.path.abspath(os.path.expanduser(folder))
+        if not (os.path.isdir(folder) and os.access(folder, os.R_OK | os.X_OK)):
+            return self._report_folder_problem(folder)
+
+        if record and not self.in_archive and self.current_folder != folder:
+            self._remember_cursor()
+            self._back.append(self.current_folder)
+            del self._back[:-_HISTORY_DEPTH]
+            self._forward.clear()
+
+        was_archive = self.in_archive
         self.archive_path = None
         self.archive_info = None
         self.archive_folder = ""
@@ -894,42 +937,163 @@ class MainWindow(QMainWindow):
         self._filter = None
         self.current_folder = folder
         SETTINGS.set("places/last_folder", folder)
+        # The address bar's drop-down is this list; without pushing to it the
+        # history only ever held extraction folders.
+        SETTINGS.push_history(folder)
 
-        self._populate_filesystem()
+        self._populate_filesystem(select or self._selection_memory.get(folder, ""))
         self.setWindowTitle(f"{folder} - LinRAR")
         self.comment_pane.clear()
-        self.tree.show_filesystem(folder)
+        # Rebuilding the tree collapses every branch the user opened, so it is
+        # built once and then simply revealed down to the new folder.
+        if was_archive or not self._tree_ready:
+            self.tree.show_filesystem(folder)
+            self._tree_ready = True
+        else:
+            self.tree.reveal(folder)
         self._update_path_combo(folder)
         self._update_actions()
+        return True
+
+    def go_back(self) -> None:
+        """Return to the previous folder, the way a file manager does."""
+        if not self._back:
+            return
+        target = self._back.pop()
+        here = self.archive_path or self.current_folder
+        self._remember_cursor()
+        if self.navigate_to(target, record=False):
+            self._forward.append(here)
+            del self._forward[:-_HISTORY_DEPTH]
+        self._update_actions()
+
+    def go_forward(self) -> None:
+        if not self._forward:
+            return
+        target = self._forward.pop()
+        here = self.current_folder
+        self._remember_cursor()
+        if os.path.isdir(target):
+            if self.navigate_to(target, record=False):
+                self._back.append(here)
+        elif os.path.isfile(target):
+            self.open_archive(target)
+        self._update_actions()
+
+    def _remember_cursor(self) -> None:
+        """Note which row is current, so coming back lands on it again."""
+        if self.in_archive or not self.current_folder:
+            return
+        items = self.list_view.selected_items()
+        name = items[0].name if items else ""
+        if not name:
+            index = self.list_view.currentIndex()
+            item = self.model.item_at(index.row()) if index.isValid() else None
+            name = item.name if item is not None and not item.is_parent else ""
+        if name:
+            self._selection_memory[self.current_folder] = name
+            # Oldest first in a dict, so trimming the front bounds the map.
+            while len(self._selection_memory) > _SELECTION_MEMORY:
+                self._selection_memory.pop(next(iter(self._selection_memory)))
+
+    def _report_folder_problem(self, folder: str) -> bool:
+        """Explain why a folder would not open, and offer somewhere to go."""
+        problem = diagnose.describe_folder(folder)
+        nearest = diagnose.nearest_existing(folder)
+        ProblemDialog.report(
+            self,
+            problem,
+            {
+                diagnose.ACTION_PARENT: (
+                    f"Go to {os.path.basename(nearest) or nearest}",
+                    lambda: self.navigate_to(nearest),
+                ),
+            },
+        )
+        return False
 
     def open_archive(self, path: str, password: Optional[str] = None) -> bool:
-        """Enter an archive, prompting for a password if it needs one."""
-        path = os.path.abspath(path)
-        if not os.path.isfile(path):
-            QMessageBox.warning(self, "LinRAR", f"The file does not exist:\n{path}")
+        """Enter an archive, explaining clearly whenever that is not possible.
+
+        Every way this can fail (a file that vanished, one that is not an
+        archive at all, a volume opened out of order, a format whose tool is
+        not installed, a damaged download) is diagnosed and reported with
+        what LinRAR actually found, rather than passed through as the archive
+        tool's own "cannot open".
+        """
+        path = os.path.abspath(os.path.expanduser(path))
+        facts = diagnose.inspect_path(path)
+
+        # Handed a folder (from the command line, a favourite, or the address
+        # bar): browse it instead of complaining about it.
+        if facts.kind == "directory":
+            return self.navigate_to(path)
+        if (
+            not facts.exists
+            or facts.kind != "file"
+            or not facts.readable
+            or facts.size == 0
+        ):
+            self.report_path(path)
             return False
+
+        # A later part of a split archive holds no index, so opening it shows
+        # a misleading fragment.  When the first volume is right there, open
+        # that instead, quietly, with a note, rather than as an error.
+        if facts.volume > 1 and facts.first_volume:
+            opened = self.open_archive(facts.first_volume, password)
+            if opened:
+                self.statusBar().showMessage(
+                    f"{os.path.basename(path)} is part {facts.volume} of a set "
+                    f"— opened {os.path.basename(facts.first_volume)} instead",
+                    8000,
+                )
+            return opened
 
         try:
             backend, fmt = REGISTRY.for_path(path)
         except OperationError as exc:
-            QMessageBox.warning(self, "LinRAR", exc.message)
+            self.report_path(path, exc)
             return False
 
-        attempt_password = password
+        # A default password set for the session is tried before the user is
+        # asked for one again.
+        attempt_password = password if password is not None else self.password
         while True:
             try:
-                info = backend.read_info(path, attempt_password)
+                info = self._busy(backend.read_info, path, attempt_password)
                 break
-            except PasswordRequired as exc:
+            except PasswordRequired:
                 result = PasswordDialog.ask(self, os.path.basename(path))
                 if result is None:
                     return False
-                attempt_password = result[0]
+                attempt_password = result[0] or None
             except OperationError as exc:
-                QMessageBox.critical(self, "LinRAR", exc.message)
+                self.report_path(path, exc)
                 return False
 
-        info.format = fmt if info.format is ArchiveFormat.UNKNOWN else info.format
+        # A backend that returns nothing at all for a file whose contents say
+        # it is not an archive has refused it, whatever its exit status said.
+        # Showing an empty archive window instead is how "nothing happened"
+        # gets mistaken for a bug in LinRAR.
+        if not info.entries and facts.mislabelled:
+            self.report_path(path)
+            return False
+
+        # Stepping into an archive is a navigation too: Back leaves it again.
+        if not self.in_archive and self.current_folder:
+            self._remember_cursor()
+            self._back.append(self.current_folder)
+            del self._back[:-_HISTORY_DEPTH]
+            self._forward.clear()
+
+        # The backend's own idea of the format usually wins, but 7-Zip calls a
+        # .deb an "Ar" archive — true, and less useful than what the signature
+        # already proved.
+        if info.format is ArchiveFormat.UNKNOWN or (
+            info.format is ArchiveFormat.AR and fmt is ArchiveFormat.DEB
+        ):
+            info.format = fmt
         self.archive_path = path
         self.archive_info = info
         self.archive_folder = ""
@@ -957,9 +1121,17 @@ class MainWindow(QMainWindow):
         return True
 
     def close_archive(self) -> None:
-        if self.in_archive:
-            folder = os.path.dirname(self.archive_path or "") or self.current_folder
-            self.navigate_to(folder)
+        if not self.in_archive:
+            return
+        archive = self.archive_path or ""
+        folder = os.path.dirname(archive) or self.current_folder
+        # Opening the archive pushed this folder onto the Back stack; leaving
+        # it again by the front door means Back should not repeat the step.
+        if self._back and self._back[-1] == folder:
+            self._back.pop()
+        # Leave the archive selected in the folder it lives in: it is what the
+        # user was just looking at.
+        self.navigate_to(folder, select=os.path.basename(archive))
 
     def go_up(self) -> None:
         if self.in_archive:
@@ -973,37 +1145,61 @@ class MainWindow(QMainWindow):
             else:
                 self.close_archive()
             return
-        parent = os.path.dirname(self.current_folder.rstrip("/"))
+        current = self.current_folder.rstrip("/")
+        parent = os.path.dirname(current)
         if parent and parent != self.current_folder:
-            self.navigate_to(parent)
+            # The folder just left is selected in its parent, so the cursor
+            # follows the eye rather than jumping to the top of the list.
+            self.navigate_to(parent, select=os.path.basename(current))
+        else:
+            self.statusBar().showMessage("This is the top of the filesystem", 3000)
 
-    def enter_archive_folder(self, folder: str) -> None:
+    def enter_archive_folder(self, folder: str, select: str = "") -> None:
         self.archive_folder = folder
         self._filter = None
-        self._populate_archive()
+        self._populate_archive(select)
         self.tree.select_archive_folder(folder)
         self._update_path_combo(self.archive_path or "")
+        self._update_actions()
 
     def refresh(self) -> None:
+        """Re-read what is on screen, and drop any find filter (F5)."""
+        filtered = self._filter is not None
+        self._filter = None
         if self.in_archive:
             path, password = self.archive_path, self.password
-            folder = self.archive_folder
+            folder, cursor = self.archive_folder, self._current_name()
             if path and self.open_archive(path, password):
-                self.enter_archive_folder(folder)
+                self.enter_archive_folder(folder, cursor)
         else:
-            self._populate_filesystem()
+            self._populate_filesystem(self._current_name())
+            # A folder created or deleted elsewhere should show up in the tree
+            # as well, not only in the listing.
+            self.tree.reload(self.current_folder)
+        if filtered:
+            self.statusBar().showMessage("Filter cleared", 3000)
+
+    def _current_name(self) -> str:
+        """The name of the row under the cursor, for restoring it after a reload."""
+        items = self.list_view.selected_items()
+        if items:
+            return items[0].name
+        index = self.list_view.currentIndex()
+        item = self.model.item_at(index.row()) if index.isValid() else None
+        return item.name if item is not None and not item.is_parent else ""
 
     # ------------------------------------------------------------------
     # listing
     # ------------------------------------------------------------------
 
-    def _populate_filesystem(self) -> None:
+    def _populate_filesystem(self, select: str = "") -> None:
         items: list[ListingItem] = []
         parent = os.path.dirname(self.current_folder.rstrip("/"))
         if parent and parent != self.current_folder:
             items.append(ListingItem(name="..", path=parent, is_dir=True, is_parent=True))
 
         show_hidden = SETTINGS.get("view/show_hidden")
+        unreadable = None
         try:
             with os.scandir(self.current_folder) as entries:
                 for entry in entries:
@@ -1027,16 +1223,39 @@ class MainWindow(QMainWindow):
                         )
                     )
         except OSError as exc:
-            QMessageBox.warning(self, "LinRAR", f"Cannot read the folder.\n\n{exc}")
+            unreadable = exc
 
         if self._filter:
             items = [i for i in items if i.is_parent or self._filter(i)]
 
         self.model.set_items(items, archive_mode=False)
         self.list_view.configure_columns(archive_mode=False)
+        self._select_named(select)
         self._update_status()
+        if unreadable is not None:
+            # Reported after the (empty) listing is up, so the window still
+            # shows where it is rather than the folder it failed to leave.
+            self._report_folder_problem(self.current_folder)
 
-    def _populate_archive(self) -> None:
+    def _select_named(self, name: str) -> None:
+        """Put the cursor on the row called *name*, and scroll it into view."""
+        if not name:
+            return
+        for row, item in enumerate(self.model.items):
+            if item.name != name or item.is_parent:
+                continue
+            index = self.model.index(row, 0)
+            selection = self.list_view.selectionModel()
+            selection.setCurrentIndex(
+                index,
+                selection.SelectionFlag.ClearAndSelect
+                | selection.SelectionFlag.Rows,
+            )
+            view = self.list_view.view
+            view.scrollTo(index, view.ScrollHint.PositionAtCenter)
+            return
+
+    def _populate_archive(self, select: str = "") -> None:
         info = self.archive_info
         if info is None:
             return
@@ -1107,6 +1326,7 @@ class MainWindow(QMainWindow):
 
         self.model.set_items(items, archive_mode=True)
         self.list_view.configure_columns(archive_mode=True)
+        self._select_named(select)
         self._update_status()
 
     def _update_path_combo(self, path: str) -> None:
@@ -1159,9 +1379,35 @@ class MainWindow(QMainWindow):
         self.act_protect.setEnabled(in_archive and writable)
         self.act_sfx.setEnabled(in_archive and writable)
         self.act_lock.setEnabled(in_archive and writable)
-        self.act_convert.setEnabled(in_archive)
         self.act_rename.setEnabled(in_archive and writable)
         self.act_extract_here.setEnabled(in_archive)
+        self.act_save_as.setEnabled(in_archive)
+        self.act_report.setEnabled(in_archive)
+        self.act_recovery_volumes.setEnabled(in_archive)
+        self.act_new_folder.setEnabled(not in_archive)
+        self.act_cut.setEnabled(not in_archive)
+        self.act_paste.setEnabled(not in_archive)
+
+        # A greyed-out Back is the only honest way to say there is nowhere to
+        # go back to; the tooltip names where each one leads.
+        self.act_back.setEnabled(bool(self._back))
+        self.act_forward.setEnabled(bool(self._forward))
+        self.act_back.setToolTip(
+            f"Back to {self._back[-1]}" if self._back else "Nowhere to go back to"
+        )
+        self.act_forward.setToolTip(
+            f"Forward to {self._forward[-1]}" if self._forward
+            else "Nowhere to go forward to"
+        )
+        if in_archive:
+            self.act_up.setEnabled(True)
+            self.act_up.setToolTip(
+                "Leave this folder" if self.archive_folder else "Close the archive"
+            )
+        else:
+            parent = os.path.dirname(self.current_folder.rstrip("/"))
+            self.act_up.setEnabled(bool(parent) and parent != self.current_folder)
+            self.act_up.setToolTip(f"Up to {parent}" if parent else "Up one level")
         self.list_view.setDragEnabled(True)
 
     # ------------------------------------------------------------------
@@ -1185,7 +1431,7 @@ class MainWindow(QMainWindow):
         ):
             self.open_archive(item.path)
         else:
-            QDesktopServices.openUrl(QUrl.fromLocalFile(item.path))
+            self._open_externally(item.path)
 
     def _on_tree_folder(self, path: str) -> None:
         if self.in_archive:
@@ -1197,13 +1443,19 @@ class MainWindow(QMainWindow):
         text = self.path_combo.currentText().strip()
         if not text:
             return
-        expanded = os.path.expanduser(text)
+        # Typed by hand, so it may carry a ~, a $HOME, or a relative path
+        # meant against the folder on screen.
+        expanded = os.path.expandvars(os.path.expanduser(text))
+        if not os.path.isabs(expanded):
+            expanded = os.path.join(self.current_folder, expanded)
+        expanded = os.path.normpath(expanded)
         if os.path.isdir(expanded):
             self.navigate_to(expanded)
-        elif os.path.isfile(expanded):
+        elif os.path.exists(expanded):
             self.open_archive(expanded)
         else:
-            QMessageBox.warning(self, "LinRAR", f"Path not found:\n{text}")
+            self._report_folder_problem(expanded)
+            self._update_path_combo(self.archive_path or self.current_folder)
 
     def _on_path_activated(self, index: int) -> None:
         if self.in_archive:
@@ -1240,6 +1492,16 @@ class MainWindow(QMainWindow):
                     lambda: self.open_archive(selected[0].path)
                 )
                 menu.addAction(self.act_extract_to)
+            elif len(selected) == 1 and not selected[0].is_dir:
+                # An ordinary file: the two things LinRAR can usefully do with
+                # it, rather than a menu of commands that all refuse.
+                target = selected[0].path
+                external = menu.addAction("Open with another application")
+                external.triggered.connect(
+                    lambda: self._open_externally(target)
+                )
+                inspect = menu.addAction(icons.icon("view"), "View in LinRAR")
+                inspect.triggered.connect(lambda: self._view_disk_file(target))
             menu.addSeparator()
             menu.addAction(self.act_add)
             menu.addAction(self.act_new_folder)
@@ -1255,6 +1517,9 @@ class MainWindow(QMainWindow):
         menu.addSeparator()
         menu.addAction(self.act_copy_path)
         menu.addAction(self.act_select_all)
+        if not self.in_archive:
+            menu.addAction(self.act_back)
+            menu.addAction(self.act_up)
         menu.addAction(self.act_refresh)
         menu.exec(self.list_view.viewport().mapToGlobal(pos))
 
@@ -1385,6 +1650,90 @@ class MainWindow(QMainWindow):
             return
         QMessageBox.critical(self, title, error.message)
 
+    # -- explaining a file that would not open ----------------------------
+
+    def _busy(self, work: Callable, *args):
+        """Run a short blocking call with the wait cursor showing.
+
+        Listing an archive happens before there is a progress window to put it
+        in, and on a large one it is long enough to look like a freeze.
+        """
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        try:
+            return work(*args)
+        finally:
+            QApplication.restoreOverrideCursor()
+
+    def report_path(
+        self, path: str, error: Optional[BaseException] = None
+    ) -> None:
+        """Diagnose *path* and show what was found, with what to do about it."""
+        problem = diagnose.describe(path, error)
+        ProblemDialog.report(self, problem, self._problem_actions(path))
+
+    def _problem_actions(self, path: str) -> dict:
+        """Every action a problem may offer, wired to this window.
+
+        The dialog only shows the ones the problem itself asked for, so this
+        one table can be handed to every caller.
+        """
+        nearest = diagnose.nearest_existing(os.path.dirname(path) or path)
+        volume = first_volume(path)
+        return {
+            diagnose.ACTION_DEPENDENCIES: (
+                "Install tools...", self.cmd_dependencies,
+            ),
+            diagnose.ACTION_FIRST_VOLUME: (
+                f"Open {os.path.basename(volume)}" if volume else "Open volume 1",
+                lambda: volume and self.open_archive(volume),
+            ),
+            diagnose.ACTION_OPEN_EXTERNAL: (
+                "Open with another application", lambda: self._open_externally(path),
+            ),
+            diagnose.ACTION_VIEW: (
+                "View in LinRAR", lambda: self._view_disk_file(path),
+            ),
+            diagnose.ACTION_REPAIR: (
+                "Repair...", lambda: self.cmd_repair(path),
+            ),
+            diagnose.ACTION_PARENT: (
+                f"Go to {os.path.basename(nearest) or nearest}",
+                lambda: self.navigate_to(nearest),
+            ),
+            diagnose.ACTION_RETRY: ("Refresh", self.refresh),
+        }
+
+    def _open_externally(self, path: str) -> bool:
+        """Hand a file to the desktop, and say so when nothing takes it."""
+        if QDesktopServices.openUrl(QUrl.fromLocalFile(path)):
+            self.statusBar().showMessage(
+                f"Opened {os.path.basename(path)} in another application", 4000
+            )
+            return True
+        # openUrl reports only that the handover failed, so the reason has to
+        # be worked out here rather than guessed at by the user.
+        problem = diagnose.describe_no_handler(path)
+        ProblemDialog.report(
+            self,
+            problem,
+            {
+                diagnose.ACTION_VIEW: (
+                    "View in LinRAR", lambda: self._view_disk_file(path),
+                ),
+            },
+        )
+        return False
+
+    def _view_disk_file(self, path: str, limit: int = 4 * 1024 * 1024) -> None:
+        """Show a file from disk in LinRAR's own viewer."""
+        try:
+            with open(path, "rb") as handle:
+                data = handle.read(limit)
+        except OSError as exc:
+            self.report_path(path, OperationError(str(exc)))
+            return
+        ViewerDialog(self, os.path.basename(path), data).exec()
+
     def _backend_for_open_archive(self):
         if self.archive_path is None:
             return None
@@ -1455,6 +1804,11 @@ class MainWindow(QMainWindow):
             return
 
         total, count = _total_bytes(files)
+        if options.sfx_format == sfx.APPIMAGE:
+            self._create_appimage(
+                backend, files, options, dialog.sfx_options(), total, count
+            )
+            return
 
         def work(ctx: TaskContext):
             backend.create(files, options, ctx)
@@ -1471,48 +1825,148 @@ class MainWindow(QMainWindow):
                 self._report(error)
             return
         if not self.in_archive:
-            self._populate_filesystem()
+            self._populate_filesystem(os.path.basename(options.archive_path))
         # The backend may have adjusted the name (SFX archives become .sfx).
         self.statusBar().showMessage(
             f"Created {os.path.basename(options.archive_path)}", 5000
         )
 
+    def _create_appimage(
+        self,
+        backend,
+        files: list[str],
+        options: CompressOptions,
+        sfx_options,
+        total: int,
+        count: int,
+    ) -> None:
+        """Compress, then wrap the result into a self-extracting AppImage.
+
+        An AppImage carries a whole RAR archive inside it, so the archive is
+        built first — into a scratch folder, because the user asked for one
+        file and should not be left tidying up an intermediate one.
+        """
+        target = options.archive_path
+        if not self._confirm_appimage_runtime():
+            return
+
+        staging = tempfile.mkdtemp(prefix="linrar-appimage-")
+        self._temp_dirs.append(staging)
+        stem = os.path.splitext(os.path.basename(target))[0] or "archive"
+        options.archive_path = os.path.join(staging, f"{stem}.rar")
+        options.create_sfx = False
+        options.volume_size = 0
+
+        def work(ctx: TaskContext):
+            backend.create(files, options, ctx)
+            ctx.on_message("Building the self-extracting AppImage...")
+            return sfx.build_sfx_appimage(
+                options.archive_path, target, sfx_options, ctx,
+                allow_download=True,
+            )
+
+        ok, result, error = self._run_task(
+            work, f"Creating {os.path.basename(target)}", total, count
+        )
+        shutil.rmtree(staging, ignore_errors=True)
+        if staging in self._temp_dirs:
+            self._temp_dirs.remove(staging)
+        if not ok:
+            if error is not None:
+                self._report(error)
+            return
+        if not self.in_archive:
+            self._populate_filesystem(os.path.basename(str(result or target)))
+        self._appimage_created(str(result or target))
+
+    def _confirm_appimage_runtime(self) -> bool:
+        """Ask about the one-off runtime download, on the GUI thread.
+
+        The worker cannot put a question on screen, so the answer has to be in
+        hand before the task starts.
+        """
+        if os.path.isfile(sfx.cached_runtime_path()) or sfx.find_donor_appimage():
+            return True
+        url = sfx.RUNTIME_URL.format(arch=sfx.runtime_arch())
+        reply = QMessageBox.question(
+            self,
+            "AppImage runtime",
+            "LinRAR needs the AppImage runtime (about 1 MB) to build a "
+            "self-extracting archive, and no copy was found on this "
+            f"machine.\n\nDownload it once from:\n{url}\n\n"
+            "It will be cached for future use.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.Yes,
+        )
+        if reply == QMessageBox.StandardButton.Yes:
+            return True
+        QMessageBox.information(
+            self,
+            "LinRAR",
+            "Without the runtime an AppImage cannot be built.\n\n"
+            "Choose the RAR .sfx stub instead — it needs no extra files.",
+        )
+        return False
+
+    def _appimage_created(self, path: str) -> None:
+        QMessageBox.information(
+            self,
+            "LinRAR",
+            f"Self-extracting AppImage created:\n{path}\n\n"
+            "Run it to unpack, or from a terminal:\n"
+            f"    {os.path.basename(path)} --help",
+        )
+
     def cmd_extract_to(self) -> None:
         if not self.in_archive:
-            selected = [
-                i for i in self.list_view.selected_items()
-                if not i.is_dir and detect_format(i.path) is not ArchiveFormat.UNKNOWN
-            ]
-            if len(selected) == 1:
-                if self.open_archive(selected[0].path):
-                    self.cmd_extract_to()
-                return
-            QMessageBox.information(
-                self, "LinRAR", "Select an archive, or open one first."
-            )
+            self._extract_selection(ask_options=True)
             return
         self._extract(ask_options=True)
 
     def cmd_extract_here(self) -> None:
         if not self.in_archive:
+            self._extract_selection(ask_options=False)
             return
         self._extract(ask_options=False)
+
+    def _extract_selection(self, ask_options: bool) -> None:
+        """Extract whatever archives are selected in the folder listing."""
+        selected = [i for i in self.list_view.selected_items() if not i.is_dir]
+        archives = [
+            i.path for i in selected
+            if detect_format(i.path) is not ArchiveFormat.UNKNOWN
+        ]
+        if not archives:
+            if len(selected) == 1:
+                # Selected exactly one thing and it is not an archive: say why
+                # rather than repeating "select an archive".
+                self.report_path(selected[0].path)
+                return
+            QMessageBox.information(
+                self, "LinRAR", "Select one or more archives, or open one first."
+            )
+            return
+        self.extract_paths(archives, ask_options)
 
     # -- entry points for the file manager's right-click menu --------------
 
     def extract_paths(self, paths: list[str], ask_options: bool) -> None:
         """Unpack each archive in *paths*, one after the other."""
+        opened = 0
         for path in paths:
-            if not os.path.isfile(path):
-                continue
             if not self.open_archive(path):
                 continue
+            opened += 1
             self.list_view.selectionModel().clearSelection()
             self._extract(ask_options=ask_options)
+        if opened == 0 and not paths:
+            QMessageBox.information(
+                self, "LinRAR", "There was nothing to extract."
+            )
 
     def test_paths(self, paths: list[str]) -> None:
         for path in paths:
-            if os.path.isfile(path) and self.open_archive(path):
+            if self.open_archive(path):
                 self.cmd_test()
 
     def _extract(self, ask_options: bool) -> None:
@@ -1786,7 +2240,9 @@ class MainWindow(QMainWindow):
         item = selected[0]
 
         if not self.in_archive:
-            QDesktopServices.openUrl(QUrl.fromLocalFile(item.path))
+            # View means LinRAR's own viewer, on disk as well as in an archive;
+            # double-clicking is what hands a file to the desktop.
+            self._view_disk_file(item.path)
             return
 
         backend = self._backend_for_open_archive()
@@ -1896,6 +2352,8 @@ class MainWindow(QMainWindow):
                 self, "LinRAR", "Some items could not be deleted:\n\n" + "\n".join(errors)
             )
         self._populate_filesystem()
+        if any(i.is_dir for i in selected):
+            self.tree.reload(self.current_folder)
 
     def cmd_rename(self) -> None:
         selected = self.list_view.selected_items()
@@ -1950,7 +2408,9 @@ class MainWindow(QMainWindow):
         except OSError as exc:
             QMessageBox.warning(self, "LinRAR", f"Cannot rename.\n\n{exc}")
             return
-        self._populate_filesystem()
+        self._populate_filesystem(new_name)
+        if item.is_dir:
+            self.tree.reload(self.current_folder)
 
     def cmd_find(self) -> None:
         dialog = FindDialog(self, self.in_archive)
@@ -2054,9 +2514,12 @@ class MainWindow(QMainWindow):
             return
         self.refresh()
 
-    def cmd_repair(self) -> None:
-        path = self.archive_path
-        if path is None:
+    def cmd_repair(self, path: str = "") -> None:
+        # Connected to a QAction, so the first argument arrives as the check
+        # state; an explicit path only ever comes from a caller in code.
+        if isinstance(path, bool) or not path:
+            path = self.archive_path or ""
+        if not path:
             selected = [i for i in self.list_view.selected_items() if not i.is_dir]
             if len(selected) != 1:
                 QMessageBox.information(
@@ -2093,7 +2556,12 @@ class MainWindow(QMainWindow):
             self._populate_filesystem()
 
     def cmd_sfx(self) -> None:
-        """Build a self-extracting, self-running AppImage from the archive."""
+        """Turn an existing archive into a self-extracting one.
+
+        Both shapes live behind this one command — an AppImage or rar's own
+        ``.sfx`` stub — because "which of the two do I want?" is a question the
+        dialog can answer far better than a menu of two similar entries.
+        """
         source = self.archive_path
         if source is None:
             selected = [
@@ -2111,7 +2579,7 @@ class MainWindow(QMainWindow):
             QMessageBox.information(
                 self,
                 "LinRAR",
-                "Self-extracting AppImages are built from RAR archives.\n\n"
+                "Self-extracting archives are built from RAR archives.\n\n"
                 "Convert the archive to RAR first (Tools > Convert archives).",
             )
             return
@@ -2119,44 +2587,24 @@ class MainWindow(QMainWindow):
         dialog = SfxDialog(self, archive_path=source)
         if dialog.exec() != SfxDialog.DialogCode.Accepted:
             return
-        options = dialog.options()
+        if dialog.sfx_format == sfx.RAR_STUB:
+            self._convert_to_stub(source)
+            return
+        self._convert_to_appimage(source, dialog.options())
 
+    def _convert_to_appimage(self, source: str, options) -> None:
         default = os.path.splitext(source)[0] + ".AppImage"
         target, _f = QFileDialog.getSaveFileName(
             self, "Save self-extracting archive", default, "AppImage (*.AppImage)"
         )
         if not target:
             return
-
-        # The download prompt has to be answered on the GUI thread, so ask now
-        # rather than from inside the worker.
-        allow_download = True
-        if not os.path.isfile(sfx.cached_runtime_path()) and not sfx.find_donor_appimage():
-            url = sfx.RUNTIME_URL.format(arch=sfx.runtime_arch())
-            reply = QMessageBox.question(
-                self,
-                "AppImage runtime",
-                "LinRAR needs the AppImage runtime (about 1 MB) to build a "
-                "self-extracting archive, and no copy was found on this "
-                f"machine.\n\nDownload it once from:\n{url}\n\n"
-                "It will be cached for future use.",
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-                QMessageBox.StandardButton.Yes,
-            )
-            allow_download = reply == QMessageBox.StandardButton.Yes
-            if not allow_download:
-                QMessageBox.information(
-                    self,
-                    "LinRAR",
-                    "Without the runtime an AppImage cannot be built.\n\n"
-                    "You can instead use Commands > Convert to RAR .sfx stub, "
-                    "which needs no extra files.",
-                )
-                return
+        if not self._confirm_appimage_runtime():
+            return
 
         def work(ctx: TaskContext):
             return sfx.build_sfx_appimage(
-                source, target, options, ctx, allow_download=allow_download
+                source, target, options, ctx, allow_download=True
             )
 
         ok, result, error = self._run_task(
@@ -2166,21 +2614,28 @@ class MainWindow(QMainWindow):
             if error is not None:
                 self._report(error)
             return
-
-        QMessageBox.information(
-            self,
-            "LinRAR",
-            f"Self-extracting AppImage created:\n{result}\n\n"
-            "Run it to unpack, or from a terminal:\n"
-            f"    {os.path.basename(str(result))} --help",
-        )
+        self._appimage_created(str(result))
         if not self.in_archive:
-            self._populate_filesystem()
+            self._populate_filesystem(os.path.basename(str(result)))
 
-    def cmd_convert(self) -> None:
-        # One entry point for conversion: the batch dialog, pre-filled with the
-        # open archive.
-        self.cmd_convert_archives()
+    def _convert_to_stub(self, source: str) -> None:
+        """rar's own Linux .sfx stub — it converts the archive in place."""
+        backend = REGISTRY.rar
+
+        def work(ctx: TaskContext):
+            return backend.convert_to_sfx(source, ctx)
+
+        ok, result, error = self._run_task(work, "Creating SFX archive")
+        if not ok:
+            if error is not None:
+                self._report(error)
+            return
+        QMessageBox.information(
+            self, "LinRAR", f"Self-extracting archive created:\n{result}"
+        )
+        if self.in_archive:
+            self.close_archive()
+        self._populate_filesystem(os.path.basename(str(result)))
 
     def cmd_password(self) -> None:
         result = PasswordDialog.ask(
@@ -2211,10 +2666,25 @@ class MainWindow(QMainWindow):
 
     def cmd_change_folder(self) -> None:
         path = QFileDialog.getExistingDirectory(
-            self, "Change folder", self.current_folder
+            self, "Go to folder", self.current_folder
         )
         if path:
             self.navigate_to(path)
+
+    def cmd_focus_address(self) -> None:
+        """Ctrl+L: type a path. Reveals the address bar if it was hidden."""
+        if not self.address_bar.isVisible():
+            if SETTINGS.is_locked("view/show_address"):
+                self.statusBar().showMessage(
+                    "The address bar is hidden by your system administrator", 6000
+                )
+                return
+            self.act_show_address.setChecked(True)
+            self.toggle_address_bar(True)
+        edit = self.path_combo.lineEdit()
+        self.path_combo.setFocus(Qt.FocusReason.ShortcutFocusReason)
+        if edit is not None:
+            edit.selectAll()
 
     def cmd_select_all(self) -> None:
         self.list_view.selectAll()
@@ -2353,7 +2823,16 @@ class MainWindow(QMainWindow):
         name, ok = QInputDialog.getText(self, "New folder", "Folder name:")
         if not ok or not name.strip():
             return
-        target = os.path.join(self.current_folder, name.strip())
+        name = name.strip()
+        if "/" in name or name in (".", ".."):
+            QMessageBox.warning(
+                self,
+                "LinRAR",
+                "A folder name cannot contain “/”.\n\nTo create nested folders, "
+                "make them one at a time.",
+            )
+            return
+        target = os.path.join(self.current_folder, name)
         try:
             os.makedirs(target, exist_ok=False)
         except FileExistsError:
@@ -2362,7 +2841,11 @@ class MainWindow(QMainWindow):
         except OSError as exc:
             QMessageBox.warning(self, "LinRAR", f"Cannot create the folder.\n\n{exc}")
             return
-        self._populate_filesystem()
+        # Listed and revealed in the tree, then selected: created folders are
+        # almost always the next thing the user wants to act on.
+        self._populate_filesystem(name)
+        self.tree.reload(self.current_folder)
+        self.statusBar().showMessage(f"Created {name}", 4000)
 
     def _clipboard_set(self, paths: list[str], cut: bool) -> None:
         from PyQt6.QtCore import QMimeData
@@ -2478,7 +2961,12 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(
                 self, "LinRAR", "Some items could not be pasted:\n\n" + "\n".join(errors)
             )
-        self._populate_filesystem()
+        elif sources:
+            self.statusBar().showMessage(
+                f"{'Moved' if cut else 'Copied'} {len(sources)} item(s) here", 5000
+            )
+        self._populate_filesystem(os.path.basename(sources[0]) if sources else "")
+        self.tree.reload(self.current_folder)
 
     def cmd_copy_path(self) -> None:
         from PyQt6.QtWidgets import QApplication
@@ -2665,32 +3153,6 @@ class MainWindow(QMainWindow):
             return
         QMessageBox.information(
             self, "LinRAR", "Volume reconstruction finished."
-        )
-        if not self.in_archive:
-            self._populate_filesystem()
-
-    def cmd_sfx_stub(self) -> None:
-        """rar's own Linux .sfx stub, as an alternative to the AppImage."""
-        if self.archive_path is None or self.archive_info is None:
-            return
-        if self.archive_info.format not in (ArchiveFormat.RAR5, ArchiveFormat.RAR4):
-            QMessageBox.information(
-                self, "LinRAR", "Only RAR archives can use the rar SFX stub."
-            )
-            return
-        source = self.archive_path
-        backend = REGISTRY.rar
-
-        def work(ctx: TaskContext):
-            return backend.convert_to_sfx(source, ctx)
-
-        ok, result, error = self._run_task(work, "Creating SFX archive")
-        if not ok:
-            if error is not None:
-                self._report(error)
-            return
-        QMessageBox.information(
-            self, "LinRAR", f"Self-extracting archive created:\n{result}"
         )
         if not self.in_archive:
             self._populate_filesystem()

@@ -1,4 +1,4 @@
-"""Archive report generation — WinRAR's Tools > Generate report."""
+"""Archive report generation: WinRAR's Tools > Generate report."""
 
 from __future__ import annotations
 
@@ -95,7 +95,7 @@ def as_html(info: ArchiveInfo, include_folders: bool = True) -> str:
     )
     return f"""<!doctype html>
 <html><head><meta charset="utf-8">
-<title>Archive report — {esc(os.path.basename(info.path))}</title>
+<title>Archive report: {esc(os.path.basename(info.path))}</title>
 <style>
  body {{ font-family: system-ui, sans-serif; margin: 2rem; color: #222; }}
  h1 {{ font-size: 1.3rem; }}
@@ -108,7 +108,7 @@ def as_html(info: ArchiveInfo, include_folders: bool = True) -> str:
  dt {{ font-weight: 600; }}
  pre {{ background: #f6f8fa; padding: 8px; overflow-x: auto; }}
 </style></head><body>
-<h1>Archive report — {esc(os.path.basename(info.path))}</h1>
+<h1>Archive report: {esc(os.path.basename(info.path))}</h1>
 <dl>
  <dt>Path</dt><dd>{esc(info.path)}</dd>
  <dt>Generated</dt><dd>{datetime.now():%Y-%m-%d %H:%M:%S}</dd>

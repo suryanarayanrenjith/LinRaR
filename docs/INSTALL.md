@@ -10,12 +10,15 @@ linrar
 Nothing is copied out of this folder: LinRAR runs from where you cloned it, and
 the launcher points back at it. Move the folder and re-run `./install.sh`.
 
-**Linux only.** LinRAR drives the Linux builds of `rar`, `unrar`, `7z` and
-`zip`, stores its settings under the XDG base directories, and registers itself
-with a freedesktop.org desktop. The installer, the uninstaller and the
-application all check `uname` / `sys.platform` first and stop with an
-explanation anywhere else. On Windows use WinRAR or 7-Zip; on macOS use Keka.
-Under WSL, install inside the Linux distribution, not on the Windows side.
+**Linux only — it does not run on Windows at all.** LinRAR drives the Linux
+builds of `rar`, `unrar`, `7z` and `zip`, stores its settings under the XDG
+base directories, and registers itself with a freedesktop.org desktop. The
+installer, the uninstaller and the application all check `uname` /
+`sys.platform` first and stop with an explanation (exit status 1) anywhere
+else; the check in `linrar/__main__.py` runs before PyQt6 is imported, so the
+message arrives even where Qt will not load. On Windows use WinRAR or 7-Zip; on
+macOS use Keka or The Unarchiver. Under WSL, install inside the Linux
+distribution, not on the Windows side.
 
 ## Options
 

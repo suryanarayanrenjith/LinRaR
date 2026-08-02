@@ -45,6 +45,9 @@ they work over SSH and in CI.
 | `test_customize.py` | toolbar/view/layout customization, elevation, CLI actions |
 | `test_persistence.py` | the config file, migration, tool discovery, the installer |
 | `test_config.py` | the system-wide config and its locks, the Linux check, the install guards |
+| `test_diagnose.py` | format sniffing, volume detection, and the report for every kind of failure |
+| `test_cli.py` | the command line: short and long forms, bad lines, `--inspect` |
+| `test_navigation.py` | Back/Forward, the cursor and the tree, refusing gracefully, shortcut clashes |
 
 Tests write to temporary directories and, where they touch settings, redirect
 `XDG_CONFIG_HOME` — running them does not disturb your own configuration.

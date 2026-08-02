@@ -3,7 +3,7 @@
 The system-wide layer is described in :mod:`linrar.core.settings`.  Whatever it
 locks must look locked: a control the user can still click, but that quietly
 refuses to save, is worse than no control at all.  Everything here is about
-making that visible in one consistent way — the control is disabled, its
+making that visible in one consistent way: the control is disabled, its
 tooltip says who decided, and the dialog carries a banner naming the file.
 """
 

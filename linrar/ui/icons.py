@@ -275,6 +275,19 @@ def _arrow_up(cx: float, cy: float, scale: float, fill: str) -> str:
     """
 
 
+def _arrow_side(cx: float, cy: float, scale: float, fill: str,
+                left: bool) -> str:
+    """The Back/Forward arrow: the up arrow laid on its side."""
+    turn = 1 if left else -1
+    return f"""
+    <g transform="translate({cx},{cy}) scale({scale * turn},{scale})"
+       filter="url(#sh)">
+      <path d="M11 -4.5 v9 h-9 v5.5 l-11 -10 l11 -10 v5.5 z" fill="{fill}"
+            stroke="#ffffff" stroke-width="1.5" stroke-linejoin="round"/>
+    </g>
+    """
+
+
 def _magnifier(cx: float, cy: float, r: float) -> str:
     return f"""
     <g filter="url(#sh)">
@@ -458,6 +471,8 @@ def _icon_svg() -> dict[str, str]:
         "up": _wrap(
             _folder(x=4, y=16, w=40, h=26) + _arrow_up(24, 12, 0.86, "url(#grn)")
         ),
+        "back": _wrap(_arrow_side(24, 24, 1.5, "url(#stl)", left=True)),
+        "forward": _wrap(_arrow_side(24, 24, 1.5, "url(#stl)", left=False)),
         "folder": _wrap(_folder()),
         "folder-open": _wrap(_folder()),
         "folder-up": _wrap(

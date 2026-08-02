@@ -131,7 +131,7 @@ class Session:
     def describe(self, requested: str = "auto") -> str:
         """A sentence for the UI about what will happen on the next command."""
         if is_root():
-            return "Running as root — changes apply immediately."
+            return "Running as root: changes apply immediately."
         method = self.preferred(requested)
         if method is None:
             return (
@@ -142,7 +142,7 @@ class Session:
         if self.active:
             minutes = max(1, self.seconds_left // 60)
             return (
-                f"Administrator access granted via {method.binary} — held for "
+                f"Administrator access granted via {method.binary}, held for "
                 f"about {minutes} more minute(s)."
             )
         if passwordless(method):

@@ -4,6 +4,99 @@ All notable changes to LinRAR, newest first.
 
 ## Unreleased
 
+### Self-extracting archives, in one step
+
+- **The Add dialog makes AppImages.** *Create SFX archive* now has the kind
+  beside it: **AppImage** or **RAR .sfx stub**, with an **Options…** button
+  for the full SFX module. One press of OK compresses *and* wraps, leaving no
+  intermediate `.rar` behind. Previously an AppImage could only be reached by
+  creating a `.rar`, opening it, and finding a separate command.
+- **One SFX command instead of two.** *Convert to AppImage (SFX)* and *Convert
+  to RAR .sfx stub* are now a single **Commands → Convert archive to SFX**
+  (`Alt+S`); the dialog asks which of the two you want and explains the
+  difference. The stub's pages are simply put away, since it takes no options.
+- The archive name follows the choice (`.AppImage` / `.sfx` / `.rar`), volume
+  splitting greys out while an AppImage is selected — it is one file — and the
+  choice is remembered and saved into compression profiles.
+
+### The interface, tidied
+
+- **Every command appears in exactly one menu.** *Repair archive* was in both
+  Commands and Tools; *Compression profiles* was in both Tools and Options.
+  Repair now lives under Tools and profiles under Options, as in WinRAR.
+- The *Protect and repair* submenu is gone: **Protect**, **Lock** and **Convert
+  archive to SFX** sit directly in Commands where WinRAR puts them, with the
+  two volume commands under a **Volumes** submenu.
+- Removed a dead *Convert archive* action that only forwarded to *Convert
+  archives…*.
+- **Help → About** now links to the website and the source repository, next to
+  the author's page.
+
+### Opening files: it now explains itself
+
+- **Every failure is diagnosed** (`linrar/core/diagnose.py`). Before anything
+  is reported, the file is inspected: what it is (regular file, folder, device,
+  dangling link), its size, whether it can be read, what its leading bytes
+  really are, what its name claimed, whether it is a later part of a split set,
+  which tool would open it and whether that tool is installed. The result is a
+  headline, an explanation, a table of findings, concrete suggestions, and a
+  block of technical detail with the hex dump, the exit code and the tool's own
+  words — which **Copy report** puts on the clipboard for a bug report.
+- **The fix is a button.** *Install tools…* when a tool is missing, *Open
+  volume 1* for a part of a split archive, *View in LinRAR*, *Open with another
+  application*, *Repair…*, or the nearest folder that still exists.
+- **Fixed: a file that is not an archive opened an empty window.** `unrar lt`
+  answers "…is not RAR archive" and still exits 0, and `x`/`t` exit 1, all of
+  which counted as success — so a text file named `.rar` "opened" and showed
+  nothing, and extracting it silently produced no files. All three now read the
+  answer rather than the exit status.
+- **Contents beat names.** A `.rar` that is really an HTML error page is
+  reported as one instead of being blamed on a broken archive; the report says
+  which of the two the format came from.
+- **Fixed: nothing happened for a file the desktop cannot open.** Double-click
+  now says so when no application is registered, and offers LinRAR's viewer.
+- **A later volume opens the first one.** `archive.part03.rar` and
+  `archive.r02` are recognised, and open the volume that carries the index.
+- **More formats.** Anything 7-Zip can read is now offered rather than refused:
+  `.deb`, `.rpm`, `.cpio`, `.ar`/`.a`, `.wim`, `.msi`, `.dmg`,
+  `.squashfs`/`.snap`, `.lzma`, `.lz`, `.lz4`, `.arj`, `.lzh` and `.Z`.
+  Signatures shared with things that are not archives (an OLE compound file is
+  an `.msi` *and* every legacy Word document) only count when the name agrees.
+
+### Browsing
+
+- **Back and Forward**, `Alt+←` / `Alt+→`, over folders and archives alike,
+  with tooltips naming where they lead and available as toolbar buttons.
+- **The cursor follows the eye.** Stepping out of a folder leaves it selected
+  in its parent; returning to a folder restores the row that was current there.
+- **The folder tree is revealed, not rebuilt**, so the branches you opened stay
+  open; it follows *Show hidden files*, and reloads one branch when a folder is
+  created, renamed, deleted or pasted.
+- **`Ctrl+L`** puts a path in the address bar (`~`, `$HOME` and relative paths
+  all work), **`Ctrl+G`** opens the folder chooser.
+- **Fixed: `Ctrl+D` did nothing.** It was bound to both *Add to favorites* and
+  *Change folder*, so Qt fired neither. Favourites keeps it.
+- **Fixed: F5 did not clear the find filter**, though the status bar and the
+  help both said it did.
+- Folder history now reaches the address bar's drop-down, which previously only
+  ever listed extraction folders.
+- *Extract* on the folder listing handles several selected archives at once,
+  and explains a single selected file that is not one.
+
+### Command line
+
+- **A short form for every action**: `-x` `--extract-here`, `-X`
+  `--extract-to`, `-a` `--add`, `-t` `--test`, `-c` `--config-info`, `-V`
+  `--version`, `-h` `--help`. The long forms the desktop files use are
+  unchanged.
+- **`-i` / `--inspect`** prints the full diagnostic report for each file
+  without opening a window, exiting 0 only for a file LinRAR can really open.
+- **The line is parsed rather than sniffed.** Unknown options are refused with
+  a suggestion of the one you meant, two actions at once are refused, an action
+  with nothing to act on fails before a window opens — all with status **2** —
+  and `--` ends the options. Files that do not exist are named on stderr
+  instead of being silently dropped.
+
 ### Settings for every user
 
 - **System-wide configuration.** `/etc/linrar/linrar.conf`, its

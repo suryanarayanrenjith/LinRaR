@@ -33,6 +33,12 @@ from . import tools
 from .models import OperationError
 from .process import ProcessRunner
 
+#: The two shapes a self-extracting archive takes on Linux.  They are stored
+#: in settings and in saved profiles, so they live here rather than in the
+#: dialog that offers them.
+APPIMAGE = "appimage"
+RAR_STUB = "rar"
+
 RUNTIME_URL = (
     "https://github.com/AppImage/type2-runtime/releases/download/continuous/"
     "runtime-{arch}"
@@ -72,7 +78,7 @@ def cached_runtime_path() -> str:
 
 @dataclass
 class SfxOptions:
-    """Mirrors WinRAR's "Advanced SFX options" dialog."""
+    """Mirrors WinRAR's SFX module configuration."""
 
     # General
     default_path: str = ""

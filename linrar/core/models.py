@@ -9,7 +9,13 @@ from typing import Optional
 
 
 class ArchiveFormat(enum.Enum):
-    """Archive container formats the application knows about."""
+    """Archive container formats the application knows about.
+
+    Everything past :data:`ISO` is read-only and handled by 7-Zip.  They are
+    listed by name rather than lumped into one "other" case so that a file
+    LinRAR *can* open is never turned away with "not recognised", and so the
+    Info dialog and the error messages can say what the file actually is.
+    """
 
     RAR5 = "RAR"
     RAR4 = "RAR4"
@@ -22,24 +28,68 @@ class ArchiveFormat(enum.Enum):
     ZSTD = "ZST"
     CAB = "CAB"
     ISO = "ISO"
+    # -- read-only, via 7-Zip --
+    LZMA = "LZMA"
+    LZIP = "LZ"
+    COMPRESS = "Z"
+    LZ4 = "LZ4"
+    ARJ = "ARJ"
+    LZH = "LZH"
+    AR = "AR"
+    DEB = "DEB"
+    RPM = "RPM"
+    CPIO = "CPIO"
+    WIM = "WIM"
+    DMG = "DMG"
+    MSI = "MSI"
+    SQUASHFS = "SQFS"
+    VHD = "VHD"
     UNKNOWN = "?"
 
     @property
     def label(self) -> str:
-        return {
-            ArchiveFormat.RAR5: "RAR5",
-            ArchiveFormat.RAR4: "RAR4",
-            ArchiveFormat.ZIP: "ZIP",
-            ArchiveFormat.SEVENZIP: "7-Zip",
-            ArchiveFormat.TAR: "TAR",
-            ArchiveFormat.GZIP: "GZip",
-            ArchiveFormat.BZIP2: "BZip2",
-            ArchiveFormat.XZ: "XZ",
-            ArchiveFormat.ZSTD: "Zstandard",
-            ArchiveFormat.CAB: "CAB",
-            ArchiveFormat.ISO: "ISO",
-            ArchiveFormat.UNKNOWN: "Unknown",
-        }[self]
+        return _FORMAT_LABELS[self]
+
+    @property
+    def read_only(self) -> bool:
+        """Formats LinRAR can list and unpack but never write."""
+        return self not in (
+            ArchiveFormat.RAR5,
+            ArchiveFormat.RAR4,
+            ArchiveFormat.ZIP,
+            ArchiveFormat.SEVENZIP,
+        )
+
+
+_FORMAT_LABELS = {
+    ArchiveFormat.RAR5: "RAR5",
+    ArchiveFormat.RAR4: "RAR4",
+    ArchiveFormat.ZIP: "ZIP",
+    ArchiveFormat.SEVENZIP: "7-Zip",
+    ArchiveFormat.TAR: "TAR",
+    ArchiveFormat.GZIP: "GZip",
+    ArchiveFormat.BZIP2: "BZip2",
+    ArchiveFormat.XZ: "XZ",
+    ArchiveFormat.ZSTD: "Zstandard",
+    ArchiveFormat.CAB: "CAB",
+    ArchiveFormat.ISO: "ISO",
+    ArchiveFormat.LZMA: "LZMA",
+    ArchiveFormat.LZIP: "Lzip",
+    ArchiveFormat.COMPRESS: "compress (.Z)",
+    ArchiveFormat.LZ4: "LZ4",
+    ArchiveFormat.ARJ: "ARJ",
+    ArchiveFormat.LZH: "LZH",
+    ArchiveFormat.AR: "ar archive",
+    ArchiveFormat.DEB: "Debian package",
+    ArchiveFormat.RPM: "RPM package",
+    ArchiveFormat.CPIO: "cpio",
+    ArchiveFormat.WIM: "Windows image (WIM)",
+    ArchiveFormat.DMG: "Apple disk image",
+    ArchiveFormat.MSI: "Windows installer (MSI)",
+    ArchiveFormat.SQUASHFS: "SquashFS",
+    ArchiveFormat.VHD: "Virtual hard disk",
+    ArchiveFormat.UNKNOWN: "Unknown",
+}
 
 
 class CompressionMethod(enum.IntEnum):
@@ -196,7 +246,13 @@ class CompressOptions:
     update_mode: UpdateMode = UpdateMode.ADD_REPLACE
 
     delete_after: bool = False
+    #: rar's own ``-sfx`` stub.  The backends act on this one.
     create_sfx: bool = False
+    #: What kind of self-extracting archive was asked for: "", "rar" or
+    #: "appimage".  An AppImage is built by wrapping a finished RAR archive, so
+    #: the backends never see it: it is carried here so the choice survives
+    #: into a saved profile and back out again.
+    sfx_format: str = ""
     solid: bool = False
     recovery_record: bool = False
     recovery_percent: int = 3

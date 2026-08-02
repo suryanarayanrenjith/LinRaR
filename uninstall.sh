@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
-# LinRAR for Linux — uninstaller.
+# LinRAR for Linux: uninstaller.
 #
 # Removes everything install.sh put on the system: the launcher, the desktop
 # entry, the icon, the file-manager right-click entries and (unless you say
 # otherwise) the virtual environment.
 #
 # It refuses to run when LinRAR was never installed, rather than sweeping the
-# standard locations on the off chance — pass --force if that is what you want.
+# standard locations on the off chance. Pass --force if that is what you want.
 #
-# The project folder itself is left alone — delete it yourself when you are
+# The project folder itself is left alone; delete it yourself when you are
 # done with it.
 
 set -euo pipefail
@@ -65,7 +65,7 @@ Running this when ${APP_NAME} is not installed is refused; --force sweeps the
 standard locations anyway.
 
 The virtual environment (.venv) is removed too, since install.sh created it;
-./install.sh builds it again. The folder containing LinRAR is never deleted —
+./install.sh builds it again. The folder containing LinRAR is never deleted;
 remove that by hand when you no longer want it.
 EOF
 }
@@ -116,7 +116,7 @@ if [ "$KERNEL" != "Linux" ]; then
     die "this uninstaller only runs on Linux (this system reports '${KERNEL}')."
 fi
 
-printf '\n%s%s for Linux — uninstaller%s\n' "$C_BOLD" "$APP_NAME" "$C_OFF"
+printf '\n%s%s for Linux: uninstaller%s\n' "$C_BOLD" "$APP_NAME" "$C_OFF"
 printf '%sproject: %s%s\n\n' "$C_DIM" "$APP_DIR" "$C_OFF"
 
 resolve_root || true
@@ -211,7 +211,7 @@ if [ "$SHOW_STATUS" = "1" ]; then
 fi
 
 if [ "$INSTALL_STATE" = "none" ] && [ "$FORCE" = "0" ]; then
-    printf '%serror:%s %s is not installed — there is nothing to remove.\n\n' \
+    printf '%serror:%s %s is not installed; there is nothing to remove.\n\n' \
         "$C_ERR" "$C_OFF" "$APP_NAME" >&2
     info "No receipt, no launcher and no desktop entry were found."
     info "Nothing has been changed.  Pick one:"
@@ -262,7 +262,7 @@ if [ -f "$MANIFEST" ]; then
     done < "$MANIFEST"
     rm -f "$MANIFEST"
 else
-    warn "no install manifest — falling back to the standard locations"
+    warn "no install manifest; falling back to the standard locations"
 fi
 
 # The receipts: this install is no longer an install once they are gone.
@@ -288,9 +288,9 @@ for base in "$USER_DATA" /usr/local/share /usr/share; do
         remove_path "${base}/nemo/actions/${APP_ID}-${action}.nemo_action"
     done
     for manager in nautilus nemo caja; do
-        remove_path "${base}/${manager}/scripts/LinRAR — Extract here"
-        remove_path "${base}/${manager}/scripts/LinRAR — Extract to..."
-        remove_path "${base}/${manager}/scripts/LinRAR — Add to archive..."
+        remove_path "${base}/${manager}/scripts/LinRAR - Extract here"
+        remove_path "${base}/${manager}/scripts/LinRAR - Extract to..."
+        remove_path "${base}/${manager}/scripts/LinRAR - Add to archive..."
     done
 done
 for bin in "${HOME}/.local/bin/${APP_ID}" "/usr/local/bin/${APP_ID}" "/usr/bin/${APP_ID}"; do
@@ -329,7 +329,7 @@ PYEOF
     then
         ok "Thunar actions removed"
     else
-        warn "could not edit ${THUNAR_UCA} — remove the LinRAR entries by hand"
+        warn "could not edit ${THUNAR_UCA}; remove the LinRAR entries by hand"
     fi
 fi
 
@@ -398,7 +398,7 @@ if [ -f "$GLOBAL_CONFIG_FILE" ]; then
     fi
     if [ -d "${GLOBAL_CONFIG_DIR}/conf.d" ] &&
        [ -n "$(ls -A "${GLOBAL_CONFIG_DIR}/conf.d" 2>/dev/null)" ]; then
-        warn "${GLOBAL_CONFIG_DIR}/conf.d still holds drop-in files — kept"
+        warn "${GLOBAL_CONFIG_DIR}/conf.d still holds drop-in files; kept"
     else
         as_root rmdir "${GLOBAL_CONFIG_DIR}/conf.d" 2>/dev/null || true
     fi
