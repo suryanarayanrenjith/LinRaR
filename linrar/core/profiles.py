@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import json
 from dataclasses import asdict, dataclass, field
 from typing import Optional
@@ -158,13 +159,33 @@ class ProfileStore:
     def load(self) -> list[Profile]:
         raw = SETTINGS.get(self.KEY, "")
         if not raw:
-            return [Profile(**asdict(p)) for p in DEFAULT_PROFILES]
+            return self.builtin()
         try:
             data = json.loads(raw)
-            profiles = [Profile(**item) for item in data]
         except (ValueError, TypeError):
-            return [Profile(**asdict(p)) for p in DEFAULT_PROFILES]
-        return profiles or [Profile(**asdict(p)) for p in DEFAULT_PROFILES]
+            return self.builtin()
+        if not isinstance(data, list):
+            return self.builtin()
+        # A key this version does not know about is not a reason to throw away
+        # every profile the user saved: a file written by a newer LinRAR is
+        # read for the fields both versions share.
+        fields = {f.name for f in dataclasses.fields(Profile)}
+        profiles = []
+        for item in data:
+            if not isinstance(item, dict) or not item.get("name"):
+                continue
+            try:
+                profiles.append(
+                    Profile(**{k: v for k, v in item.items() if k in fields})
+                )
+            except (TypeError, ValueError):
+                continue
+        return profiles or self.builtin()
+
+    @staticmethod
+    def builtin() -> list[Profile]:
+        """Fresh copies of the profiles LinRAR ships with."""
+        return [Profile(**asdict(p)) for p in DEFAULT_PROFILES]
 
     def save(self, profiles: list[Profile]) -> None:
         SETTINGS.set(self.KEY, json.dumps([asdict(p) for p in profiles], indent=None))
@@ -182,6 +203,23 @@ class ProfileStore:
             if profile.is_default:
                 return profile
         return profiles[0]
+
+    def chosen_default(self) -> Optional[Profile]:
+        """The default profile, unless it is the untouched built-in one.
+
+        The Archive dialog starts from the settings the last archive used, and
+        then applies whichever profile is marked as the default.  The profile
+        LinRAR ships as "Default" holds nothing but the factory values, so
+        applying it wiped those remembered settings on every single launch —
+        change the method to Best, make an archive, and the next one was back
+        to Normal.  ``None`` here means "nobody has chosen a default; leave the
+        remembered settings alone".
+        """
+        profile = self.default()
+        pristine = Profile(**asdict(DEFAULT_PROFILES[0]))
+        pristine.name = profile.name
+        pristine.is_default = profile.is_default
+        return None if asdict(profile) == asdict(pristine) else profile
 
     def upsert(self, profile: Profile) -> None:
         profiles = [p for p in self.load() if p.name != profile.name]

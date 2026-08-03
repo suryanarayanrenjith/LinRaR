@@ -42,6 +42,7 @@ from ..core.models import (
     OverwriteMode,
     PasswordRequired,
     format_size,
+    format_size_short,
 )
 from ..core import sfx
 from ..core.profiles import PROFILES, Profile
@@ -108,6 +109,7 @@ TOOLBAR_CATALOGUE: list[tuple[str, str, str]] = [
     ("sfx", "act_sfx", "SFX"),
     ("convert", "act_convert_archives", "Convert"),
     ("report", "act_report", "Report"),
+    ("checksums", "act_checksums", "Checksum"),
     ("open", "act_open", "Open"),
     ("close", "act_close", "Close"),
     ("back", "act_back", "Back"),
@@ -410,6 +412,10 @@ class MainWindow(QMainWindow):
             "&Generate report...", "view", "Alt+G", self.cmd_report,
             "Save a listing of the archive contents",
         )
+        self.act_checksums = self._act(
+            "Calculate chec&ksums...", "test", "Ctrl+K", self.cmd_checksums,
+            "CRC32, MD5 and SHA digests for the selected files",
+        )
         self.act_profiles = self._act(
             "Compression &profiles...", "add", "Alt+C", self.cmd_profiles
         )
@@ -514,6 +520,13 @@ class MainWindow(QMainWindow):
 
         file_menu = bar.addMenu("&File")
         file_menu.addAction(self.act_open)
+        # The archives opened lately, which is almost always where the next
+        # one is: the address bar's history only ever held folders.
+        self.recent_menu = file_menu.addMenu(
+            icons.icon("archive-small"), "Open &recent"
+        )
+        self.recent_menu.menuAction().setProperty("iconName", "archive-small")
+        self._rebuild_recent()
         file_menu.addAction(self.act_close)
         file_menu.addSeparator()
         file_menu.addAction(self.act_back)
@@ -586,6 +599,7 @@ class MainWindow(QMainWindow):
         tools.addAction(self.act_convert_archives)
         tools.addAction(self.act_repair)
         tools.addAction(self.act_report)
+        tools.addAction(self.act_checksums)
         tools.addSeparator()
         tools.addAction(self.act_passwords)
         tools.addSeparator()
@@ -851,6 +865,9 @@ class MainWindow(QMainWindow):
         self.list_view.details.header().sortIndicatorChanged.connect(
             self._on_sort_changed
         )
+        # Dragging a member out of an archive means unpacking it first; the
+        # model asks for that here rather than knowing anything about backends.
+        self.model.drag_paths = self._paths_for_drag
         right.addWidget(self.list_view)
 
         self.comment_pane = QPlainTextEdit()
@@ -898,6 +915,14 @@ class MainWindow(QMainWindow):
         self.total_label.setObjectName("StatusPane")
         self.total_label.setMinimumWidth(220)
         bar.addPermanentWidget(self.total_label)
+
+        # How much room is left where the files are going.  An archive manager
+        # is one of the few programs that routinely fills a disk, and finding
+        # out at 94% of an extraction is the wrong moment.
+        self.space_label = QLabel("")
+        self.space_label.setObjectName("StatusPane")
+        self.space_label.setMinimumWidth(96)
+        bar.addPermanentWidget(self.space_label)
 
     def _status_button(self, icon: str, tip: str, slot: Callable) -> QToolButton:
         button = QToolButton()
@@ -1063,13 +1088,19 @@ class MainWindow(QMainWindow):
             return None
 
         # A default password set for the session is tried before the user is
-        # asked for one again.
+        # asked for one again, and so is every saved password whose mask fits
+        # this archive: the point of saving one is not being asked.
         attempt_password = password if password is not None else self.password
+        stored = _StoredPasswords(path) if password is None else _StoredPasswords()
         while True:
             try:
                 info = self._busy(backend.read_info, path, attempt_password)
                 break
             except PasswordRequired:
+                nxt = stored.next_after(attempt_password)
+                if nxt is not None:
+                    attempt_password = nxt
+                    continue
                 result = PasswordDialog.ask(self, os.path.basename(path))
                 if result is None:
                     return None
@@ -1077,6 +1108,11 @@ class MainWindow(QMainWindow):
             except OperationError as exc:
                 self.report_path(path, exc)
                 return None
+
+        if stored.used(attempt_password) and announce:
+            self.statusBar().showMessage(
+                f"{os.path.basename(path)} unlocked with a saved password", 6000
+            )
 
         # A backend that returns nothing at all for a file whose contents say
         # it is not an archive has refused it, whatever its exit status said.
@@ -1141,6 +1177,8 @@ class MainWindow(QMainWindow):
             | {e.parent for e in info.entries if e.parent}
         )
         self.tree.show_archive(os.path.basename(path), [f for f in folders if f])
+        SETTINGS.push_recent(path)
+        self._rebuild_recent()
         self._update_path_combo(path)
         self._update_actions()
         self.key_button.setToolTip(
@@ -1399,6 +1437,30 @@ class MainWindow(QMainWindow):
             f"Total {format_size(total)} bytes in {len(files)} file(s)"
             + (f", {folders} folder(s)" if folders else "")
         )
+        self._update_free_space()
+
+    def _update_free_space(self) -> None:
+        """Room left on the filesystem the current folder lives on."""
+        label = getattr(self, "space_label", None)
+        if label is None:
+            return
+        where = (
+            os.path.dirname(self.archive_path) if self.in_archive and self.archive_path
+            else self.current_folder
+        )
+        try:
+            usage = shutil.disk_usage(where or "/")
+        except OSError:
+            label.setText("")
+            label.setToolTip("")
+            return
+        label.setText(f"{format_size_short(usage.free)} free")
+        percent = int(usage.used * 100 / usage.total) if usage.total else 0
+        label.setToolTip(
+            f"{where}\n"
+            f"{format_size_short(usage.free)} free of "
+            f"{format_size_short(usage.total)} ({percent}% used)"
+        )
 
     def _update_actions(self) -> None:
         in_archive = self.in_archive
@@ -1519,6 +1581,7 @@ class MainWindow(QMainWindow):
             menu.addAction(self.act_delete)
             menu.addAction(self.act_rename)
             menu.addSeparator()
+            menu.addAction(self.act_checksums)
             menu.addAction(self.act_properties)
         else:
             if len(selected) == 1 and selected[0].is_dir:
@@ -1569,6 +1632,8 @@ class MainWindow(QMainWindow):
                 menu.addSeparator()
                 menu.addAction(self.act_delete)
                 menu.addAction(self.act_rename)
+                if any(not item.is_dir for item in selected):
+                    menu.addAction(self.act_checksums)
                 menu.addAction(self.act_properties)
         menu.addSeparator()
         menu.addAction(self.act_copy_path)
@@ -1580,6 +1645,83 @@ class MainWindow(QMainWindow):
         menu.exec(self.list_view.viewport().mapToGlobal(pos))
 
     # -- drag and drop -----------------------------------------------------
+
+    #: Above this, dragging a selection out of an archive is refused rather
+    #: than freezing the window while gigabytes are unpacked to /tmp.  Extract
+    #: is the command for that, and it has a progress window and a Cancel.
+    DRAG_LIMIT = 512 * 1024 * 1024
+
+    def _stage_members(self, members: list[str], prefix: str) -> Optional[str]:
+        """Unpack *members* into a scratch folder and return where it is.
+
+        The folder is registered for cleanup on exit, so nothing here has to
+        remember to tidy up after itself.  ``None`` means it did not work, and
+        the reason is already on the status bar.
+        """
+        backend = self._backend_for_open_archive()
+        if backend is None or self.archive_path is None or not members:
+            return None
+        workdir = tempfile.mkdtemp(prefix=prefix)
+        self._temp_dirs.append(workdir)
+        options = ExtractOptions(
+            destination=workdir,
+            members=members,
+            password=self.password,
+            overwrite_mode=OverwriteMode.OVERWRITE,
+        )
+        try:
+            self._busy(backend.extract, self.archive_path, options)
+        except OperationError as exc:
+            shutil.rmtree(workdir, ignore_errors=True)
+            if workdir in self._temp_dirs:
+                self._temp_dirs.remove(workdir)
+            self.statusBar().showMessage(
+                f"Could not unpack the files: {exc.message}", 8000
+            )
+            return None
+        return workdir
+
+    def _selection_bytes(self, members: list[str]) -> int:
+        """How much the named members unpack to."""
+        if self.archive_info is None:
+            return 0
+        wanted = set(members)
+        return sum(
+            entry.size for entry in self.archive_info.entries
+            if not entry.is_dir and entry.name in wanted
+        )
+
+    def _paths_for_drag(self, items: list[ListingItem]) -> list[str]:
+        """Unpack the rows being dragged, and hand back where they landed.
+
+        Qt asks for this at the *start* of the drag, before the pointer moves,
+        so the work is done here and not on the drop — there is no drop to
+        hook: the file manager on the other end does that part.
+        """
+        members = self._expand_selection(items)
+        if not members:
+            return []
+
+        total = self._selection_bytes(members)
+        if total > self.DRAG_LIMIT:
+            self.statusBar().showMessage(
+                f"{format_size(total)} bytes is too much to drag out — "
+                "use Extract instead",
+                8000,
+            )
+            return []
+
+        workdir = self._stage_members(members, "linrar-drag-")
+        if workdir is None:
+            return []
+        # Hand over the topmost thing each selected row produced, so dragging
+        # a folder drops the folder rather than a scatter of loose files.
+        roots = {member.split("/", 1)[0] for member in members}
+        return [
+            os.path.join(workdir, root)
+            for root in sorted(roots)
+            if os.path.exists(os.path.join(workdir, root))
+        ]
 
     def dragEnterEvent(self, event) -> None:
         if event.mimeData().hasUrls():
@@ -1645,7 +1787,13 @@ class MainWindow(QMainWindow):
         if dialog.backgrounded and task.isRunning():
             self._adopt_background_task(task, title)
             return None, None, None
-        task.wait(5000)
+        if not task.wait(5000):
+            # The worker outlived the window: a child process that ignored the
+            # cancel, or a very long final flush.  Reporting success here (as
+            # this used to) claims an operation finished while it is still
+            # running, so it is adopted and reported when it really ends.
+            self._adopt_background_task(task, title)
+            return None, None, None
         self._task = None
         if task.error is not None:
             return False, None, task.error
@@ -1688,13 +1836,22 @@ class MainWindow(QMainWindow):
         total_bytes: int = 0,
         total_items: int = 0,
         plan: Optional[dict] = None,
+        archive_path: str = "",
     ) -> tuple[bool, object]:
         """Run an archive operation, prompting for a password as needed.
 
         ``make_work`` receives the password to use and returns the worker.  A
         wrong or missing password loops back to the prompt instead of failing,
         and the accepted password is remembered for the rest of the session.
+        Saved passwords whose mask fits the archive are tried first, so an
+        archive the user has already told LinRAR about never asks again.
+        *archive_path* names the archive being worked on; it defaults to the
+        open one, and callers that work on an archive **without** opening it
+        (Extract Here and Test from the file list, and the right-click menu)
+        must pass it, or the saved passwords would not be found.
         """
+        subject = archive_path or self.archive_path or ""
+        stored = _StoredPasswords(subject)
         while True:
             ok, result, error = self._run_task(
                 make_work(self.password), title, total_bytes, total_items, plan
@@ -1704,9 +1861,11 @@ class MainWindow(QMainWindow):
             if ok is None or error is None:
                 return False, None
             if isinstance(error, PasswordRequired):
-                answer = PasswordDialog.ask(
-                    self, os.path.basename(self.archive_path or "")
-                )
+                nxt = stored.next_after(self.password)
+                if nxt is not None:
+                    self.password = nxt
+                    continue
+                answer = PasswordDialog.ask(self, os.path.basename(subject))
                 if answer is None:
                     return False, None
                 self.password = answer[0] or None
@@ -1860,8 +2019,10 @@ class MainWindow(QMainWindow):
             self, files=paths, base_folder=base, default_name=default_name
         )
         # A profile chosen from Options > Compression profiles pre-fills the
-        # dialog; otherwise the one marked as default does.
-        profile = self._pending_profile or PROFILES.default()
+        # dialog; otherwise a default the user actually configured does.  The
+        # untouched built-in "Default" deliberately does not, or it would undo
+        # the settings the dialog just restored from the last archive made.
+        profile = self._pending_profile or PROFILES.chosen_default()
         if profile is not None:
             dialog.apply_profile(profile)
         self._pending_profile = None
@@ -2146,6 +2307,7 @@ class MainWindow(QMainWindow):
             total,
             len(plan),
             plan=plan,
+            archive_path=archive_path,
         )
         if not ok:
             return False
@@ -2352,6 +2514,7 @@ class MainWindow(QMainWindow):
             sum(plan.values()),
             len(plan),
             plan=plan,
+            archive_path=archive_path,
         )
         if ok:
             QMessageBox.information(
@@ -2551,8 +2714,12 @@ class MainWindow(QMainWindow):
         dialog = FindDialog(self, self.in_archive)
         if dialog.exec() != FindDialog.DialogCode.Accepted:
             return
-        mask = dialog.mask
-        case_sensitive = dialog.case_sensitive
+        query = dialog.query()
+        if query.wants_text:
+            self._find_text(query)
+            return
+
+        mask, case_sensitive = query.mask, query.case_sensitive
 
         def matches(item: ListingItem) -> bool:
             name = item.name if case_sensitive else item.name.lower()
@@ -2568,6 +2735,62 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(
             f"{count} item(s) match '{mask}' — press F5 to clear the filter", 8000
         )
+
+    def _find_text(self, query) -> None:
+        """Search inside the files, rather than filtering the list by name.
+
+        Reading files takes long enough to need the progress window and a way
+        out of it, so it goes through the same task machinery every other slow
+        operation uses.
+        """
+        from ..core import search as search_module
+        from .dialogs.search import SearchResultsDialog, result_summary
+
+        if self.in_archive:
+            info, backend = self.archive_info, self._backend_for_open_archive()
+            if info is None or backend is None or self.archive_path is None:
+                return
+            archive_path, password = self.archive_path, self.password
+            where = os.path.basename(archive_path)
+
+            def work(ctx: TaskContext):
+                return search_module.search_archive(
+                    archive_path, backend, info, query, password, ctx
+                )
+        else:
+            folder = self.current_folder
+            where = os.path.basename(folder) or folder
+
+            def work(ctx: TaskContext):
+                return search_module.search_folder(folder, query, ctx)
+
+        ok, result, error = self._run_task(work, f"Searching {where}")
+        if not ok:
+            if error is not None:
+                self._report(error)
+            return
+        if result is None:
+            return
+
+        window = SearchResultsDialog(
+            self, query, result, where, in_archive=self.in_archive
+        )
+        window.goTo.connect(self._go_to_result)
+        window.exec()
+        self.statusBar().showMessage(result_summary(result, query), 10000)
+
+    def _go_to_result(self, name: str) -> None:
+        """Show a file the search found, wherever the window happens to be."""
+        if self.in_archive:
+            folder = name.rsplit("/", 1)[0] if "/" in name else ""
+            self.enter_archive_folder(folder, name.rsplit("/", 1)[-1])
+            return
+        target = os.path.join(self.current_folder, name)
+        parent = os.path.dirname(target)
+        if parent and parent != self.current_folder and os.path.isdir(parent):
+            self.navigate_to(parent, select=os.path.basename(target))
+        else:
+            self._select_named(os.path.basename(target))
 
     def cmd_info(self) -> None:
         if self.archive_info is None:
@@ -3122,10 +3345,7 @@ class MainWindow(QMainWindow):
 
         items = self.list_view.selected_items()
         if items:
-            if self.in_archive:
-                text = "\n".join(i.path for i in items)
-            else:
-                text = "\n".join(i.path for i in items)
+            text = "\n".join(i.path for i in items)
         else:
             text = self.archive_path or self.current_folder
         QApplication.clipboard().setText(text)
@@ -3305,6 +3525,69 @@ class MainWindow(QMainWindow):
         )
         if not self.in_archive:
             self._populate_filesystem()
+
+    def cmd_checksums(self) -> None:
+        """Tools > Calculate checksums, for disk files or archive members.
+
+        Every algorithm is computed in one pass over the bytes, so asking for
+        five of them costs no more reading than asking for one.
+        """
+        from ..core import hashes
+        from .dialogs.checksum import ChecksumDialog
+
+        selected = [i for i in self.list_view.selected_items() if not i.is_dir]
+        if not selected:
+            QMessageBox.information(
+                self,
+                "LinRAR",
+                "Select the files you want checksums for."
+                + ("\n\nFolders are not included; select the files inside one."
+                   if self.list_view.selected_items() else ""),
+            )
+            return
+
+        if self.in_archive:
+            members = [item.path for item in selected]
+            total = self._selection_bytes(members)
+            if total > self.DRAG_LIMIT:
+                reply = QMessageBox.question(
+                    self,
+                    "Calculate checksums",
+                    f"These files unpack to {format_size(total)} bytes, which "
+                    "has to be written to a temporary folder first.\n\n"
+                    "Carry on?",
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                    QMessageBox.StandardButton.No,
+                )
+                if reply != QMessageBox.StandardButton.Yes:
+                    return
+            workdir = self._stage_members(members, "linrar-checksum-")
+            if workdir is None:
+                return
+            files = []
+            for item in selected:
+                staged = os.path.join(workdir, item.path)
+                if not os.path.isfile(staged):
+                    staged = _find_under(workdir, item.name) or staged
+                files.append((item.path, staged))
+        else:
+            files = [(item.name, item.path) for item in selected]
+
+        def work(ctx: TaskContext):
+            return hashes.digest_files(files, hashes.ALGORITHMS, ctx)
+
+        ok, results, error = self._run_task(
+            work,
+            f"Checksumming {len(files)} file(s)",
+            sum(i.size for i in selected),
+            len(files),
+        )
+        if not ok:
+            if error is not None:
+                self._report(error)
+            return
+        if results:
+            ChecksumDialog(self, list(results)).exec()
 
     def cmd_help_topics(self) -> None:
         HelpDialog(self).exec()
@@ -3489,9 +3772,10 @@ class MainWindow(QMainWindow):
             "geometry/columns", "geometry/splitter",
         )
         SETTINGS.sync()
-        self.list_view.details.header().reset()
+        self.list_view.reset_columns()
         self.list_view.configure_columns(self.in_archive)
         self._apply_customization()
+        self.sort_by(0, False)
         self.statusBar().showMessage("Interface reset", 3000)
 
     def cmd_settings(self) -> None:
@@ -3522,8 +3806,17 @@ class MainWindow(QMainWindow):
         should never pay for it.
         """
         from .dialogs.update import open_updater
+        from .. import version as versions
 
         open_updater(self)
+        if versions.restart_pending():
+            # The files on disk are the new version; this process is not.  Say
+            # so where it stays said, rather than only in a dialog that has
+            # just been closed.
+            self.statusBar().showMessage(
+                f"LinRAR {versions.installed_version()} is installed — "
+                f"restart to use it (running {versions.__version__})", 0
+            )
 
     def start_update_check(self) -> None:
         """The quiet check at start-up, when the user has asked for one."""
@@ -3580,6 +3873,38 @@ class MainWindow(QMainWindow):
     def _clear_favorites(self) -> None:
         SETTINGS.set_favorites([])
         self._rebuild_favorites()
+
+    # -- recently opened archives -----------------------------------------
+
+    def _rebuild_recent(self) -> None:
+        """Fill File > Open recent, dropping anything that has since gone."""
+        menu = getattr(self, "recent_menu", None)
+        if menu is None:
+            return
+        menu.clear()
+        entries = [path for path in SETTINGS.recent() if os.path.isfile(path)]
+        if not entries:
+            empty = menu.addAction("No archives opened yet")
+            empty.setEnabled(False)
+            return
+        for index, path in enumerate(entries, start=1):
+            # Alt+1..9 inside the menu, the way every file menu numbers these.
+            prefix = f"&{index}  " if index < 10 else "    "
+            action = menu.addAction(
+                icons.icon("archive-small"), prefix + _shorten_path(path)
+            )
+            action.setToolTip(path)
+            action.triggered.connect(
+                lambda _checked=False, target=path: self.open_archive(target)
+            )
+        menu.addSeparator()
+        clear = menu.addAction("Clear the list")
+        clear.triggered.connect(self._clear_recent)
+
+    def _clear_recent(self) -> None:
+        SETTINGS.set_recent([])
+        self._rebuild_recent()
+        self.statusBar().showMessage("Recent archives cleared", 3000)
 
     # -- appearance --------------------------------------------------------
 
@@ -3675,7 +4000,13 @@ class MainWindow(QMainWindow):
 
     def toggle_hidden(self, checked: bool) -> None:
         SETTINGS.set("view/show_hidden", checked)
-        self.refresh()
+        # A dot file is a disk idea, not an archive one: re-reading the whole
+        # archive to answer it would cost a listing (and a password prompt on
+        # an encrypted one) for a setting that cannot change what is shown.
+        if self.in_archive:
+            return
+        self._populate_filesystem(self._current_name())
+        self.tree.reload(self.current_folder)
 
     # -- shutdown ----------------------------------------------------------
 
@@ -3707,6 +4038,43 @@ class MainWindow(QMainWindow):
         for path in self._temp_dirs:
             shutil.rmtree(path, ignore_errors=True)
         super().closeEvent(event)
+
+
+class _StoredPasswords:
+    """The saved passwords that fit one archive, offered one at a time.
+
+    Tools > Organize passwords has always been able to *hold* a password; this
+    is what makes holding one worth anything.  Each is tried once, in the order
+    :meth:`~linrar.core.passwords.PasswordStore.candidates_for` ranks them
+    (a specific mask before a catch-all), and only when they are exhausted is
+    the user asked.  Reading the store is deliberately never fatal: a keyring
+    that will not answer must not stop an archive from opening.
+    """
+
+    def __init__(self, archive_path: str = "") -> None:
+        self._queue: list[str] = []
+        self._taken: set[str] = set()
+        if not archive_path:
+            return
+        try:
+            from ..core.passwords import PASSWORDS
+
+            self._queue = PASSWORDS.candidates_for(os.path.basename(archive_path))
+        except Exception:  # noqa: BLE001 - a broken store is not a broken archive
+            self._queue = []
+
+    def next_after(self, failed: Optional[str]) -> Optional[str]:
+        """The next untried saved password, or ``None`` to ask the user."""
+        while self._queue:
+            candidate = self._queue.pop(0)
+            if candidate and candidate != failed and candidate not in self._taken:
+                self._taken.add(candidate)
+                return candidate
+        return None
+
+    def used(self, password: Optional[str]) -> bool:
+        """Did *password* come from the store rather than from the user?"""
+        return bool(password) and password in self._taken
 
 
 def _size_plan(paths: list[str]) -> dict[str, int]:
@@ -3741,6 +4109,25 @@ def _member_plan(info: ArchiveInfo, members: list[str]) -> dict[str, int]:
         for entry in info.entries
         if not entry.is_dir and (wanted is None or entry.name in wanted)
     }
+
+
+def _shorten_path(path: str, limit: int = 58) -> str:
+    """A path that fits in a menu: home as ``~``, the middle as ``…``."""
+    home = os.path.expanduser("~")
+    shown = "~" + path[len(home):] if path.startswith(home + os.sep) else path
+    if len(shown) <= limit:
+        return shown
+    name = os.path.basename(shown)
+    room = limit - len(name) - 4
+    return (shown[:room] + "…/" + name) if room > 4 else "…/" + name
+
+
+def _find_under(folder: str, name: str) -> str:
+    """Where a file called *name* ended up beneath *folder*, or ""."""
+    for root, _dirs, names in os.walk(folder):
+        if name in names:
+            return os.path.join(root, name)
+    return ""
 
 
 def _unique_path(target: str) -> str:

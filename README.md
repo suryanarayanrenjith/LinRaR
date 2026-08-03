@@ -298,9 +298,11 @@ are kept.
 
 **Browsing**: browse the filesystem, step *into* an archive and keep browsing.
 Folder tree, address bar, Back and Forward (`Alt+←` / `Alt+→`), sortable
-columns, five view modes, column chooser, comment pane, favourites, find, drag
-and drop. Stepping out of a folder leaves the cursor on it, the tree keeps the
-branches you opened, and `Ctrl+L` puts a path straight into the address bar.
+columns, five view modes, column chooser, comment pane, favourites, recently
+opened archives, find, drag and drop both ways. Stepping out of a folder
+leaves the cursor on it, the tree keeps the branches you opened, `Ctrl+L` puts
+a path straight into the address bar, and the status bar keeps an eye on the
+free space where the files are going.
 
 **Opening anything.** Archives are identified by their *contents*, so a file
 opens whatever it is called: RAR, ZIP, 7z, TAR, GZip, BZip2, XZ, Zstandard,
@@ -340,9 +342,27 @@ speed, the live compression figure, and the percentage in the window title.
 
 **Commands**: Test, View, Save as, Delete, Rename, Find, Info, Properties,
 Comment, Protect (recovery record), recovery volumes and reconstruction,
-Repair, Lock, Convert to SFX, batch Convert, reports. Every command lives in
-exactly one menu, in WinRAR's arrangement: **Commands** for what is done to an
-archive, **Tools** for what is done in bulk or to LinRAR itself.
+Repair, Lock, Convert to SFX, batch Convert, reports, checksums. Every command
+lives in exactly one menu, in WinRAR's arrangement: **Commands** for what is
+done to an archive, **Tools** for what is done in bulk or to LinRAR itself.
+
+**Find, by name or by what is inside** (`Ctrl+F`). A file-name mask filters
+the list in place. Add some text and LinRAR reads the matching files — through
+the current folder and everything under it, or through the whole of the open
+archive — and lists every line that contains it, grouped by file, with line
+numbers and a button that takes the window to any of them.
+
+**Checksums** (`Ctrl+K`): CRC32, MD5, SHA-1, SHA-256 and SHA-512 for the
+selected files, on disk or inside an archive, all from one pass over the
+bytes. Paste a published checksum and it names the file that matches it; the
+result saves in the exact `sha256sum` layout.
+
+**Saved passwords that are actually used.** *Tools → Organize passwords* holds
+passwords against file-name masks, and an archive that one of them opens never
+asks. The prompt itself has a **Remember this password** box.
+
+**Drag files out**, into any file manager — including out of an open archive,
+which unpacks them on the way and keeps a selected folder whole.
 
 **Themes and customization.** A light and a dark theme drawn by LinRAR itself,
 a toolbar you choose the contents and order of, five file-list views, and a

@@ -63,7 +63,11 @@ class ZipBackend(ArchiveBackend):
                 for item in archive.infolist():
                     info.entries.append(self._entry_from_info(item))
         except zipfile.BadZipFile as exc:
-            raise OperationError(f"This is not a valid ZIP archive.\n\n{exc}") from exc
+            fallback = self._retry_with_sevenzip(
+                "read", exc, lambda seven: seven.read_info(path, password)
+            )
+            fallback.format = ArchiveFormat.ZIP
+            return fallback
         except OSError as exc:
             raise OperationError(f"Cannot open the archive.\n\n{exc}") from exc
 
@@ -117,6 +121,41 @@ class ZipBackend(ArchiveBackend):
             "    sudo apt install p7zip-full\n\n"
             f"({exc})"
         )
+
+    def _retry_with_sevenzip(self, verb: str, exc: Exception, work):
+        """Hand a ZIP :mod:`zipfile` will not touch to 7-Zip instead.
+
+        zipfile is stricter than the format is in practice: a spanned archive,
+        one with a self-extracting stub in front of it, one whose central
+        directory disagrees with its local headers — 7-Zip opens all of them,
+        and refusing outright told the user their archive was broken when the
+        reader simply was not up to it.
+
+        When 7-Zip cannot open it either, the archive really is damaged, and
+        the message says so in ZIP terms rather than passing through a bare
+        "exit code 2" from a tool the user never asked for.
+        """
+        seven = self._sevenzip_fallback()
+        if seven is None:
+            raise OperationError(
+                f"This ZIP archive could not be {verb} by the built-in "
+                "reader.\n\nInstall 7-Zip to handle the less common "
+                "variants:\n    sudo apt install p7zip-full\n\n"
+                f"({exc})"
+            ) from exc
+        try:
+            return work(seven)
+        except PasswordRequired:
+            raise
+        except OperationError as fallback_error:
+            raise OperationError(
+                f"This ZIP archive could not be {verb}: neither the built-in "
+                "reader nor 7-Zip could make sense of it, so it is most "
+                "likely damaged or incomplete.\n\n"
+                f"({exc})",
+                fallback_error.code,
+                fallback_error.output,
+            ) from exc
 
     # -- extraction --------------------------------------------------------
 
@@ -223,7 +262,9 @@ class ZipBackend(ArchiveBackend):
                 ) from exc
             raise OperationError(str(exc)) from exc
         except zipfile.BadZipFile as exc:
-            raise OperationError(f"The archive is damaged.\n\n{exc}") from exc
+            self._retry_with_sevenzip(
+                "extracted", exc, lambda seven: seven.extract(path, options, ctx)
+            )
 
     def _extract_one(
         self,
@@ -340,7 +381,9 @@ class ZipBackend(ArchiveBackend):
                 ) from exc
             raise OperationError(str(exc)) from exc
         except zipfile.BadZipFile as exc:
-            raise OperationError(f"The archive is damaged.\n\n{exc}") from exc
+            self._retry_with_sevenzip(
+                "tested", exc, lambda seven: seven.test(path, password, ctx)
+            )
 
     # -- creation ----------------------------------------------------------
 

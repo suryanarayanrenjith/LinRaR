@@ -160,6 +160,14 @@ class ArchiveDialog(QDialog):
         excludes = str(SETTINGS.get("compression/exclude") or "")
         if excludes:
             self.exclude_edit.setPlainText(excludes)
+        # Last, because setting the format above rebuilt this combo from the
+        # format's own list: _refresh_dictionary keeps a size that is still on
+        # offer, so putting the remembered one in now survives the final sync.
+        remembered = str(SETTINGS.get("compression/dictionary") or "")
+        if remembered:
+            index = self.dictionary_combo.findText(remembered)
+            if index >= 0:
+                self.dictionary_combo.setCurrentIndex(index)
 
     def _remember(self) -> None:
         """Store the choices so the next archive starts from the same place."""
@@ -852,13 +860,34 @@ class ArchiveDialog(QDialog):
         self._remember()
         self.accept()
 
+    def _storage_base(self) -> str:
+        """The folder member paths are stored relative to.
+
+        Recomputed from the list as it stands rather than from the selection
+        the dialog opened with: files added on the Files tab may live anywhere,
+        and measuring them against the original folder produced ``../..``
+        paths that the archive tools then stored in surprising places.
+        """
+        files = [os.path.abspath(f) for f in self.selected_files() if f.strip()]
+        if not files:
+            return self.base_folder
+        folders = [os.path.dirname(f) or "/" for f in files]
+        try:
+            base = os.path.commonpath(folders)
+        except ValueError:
+            return self.base_folder
+        # One file selected inside the folder the dialog opened on: keep that
+        # folder, so "add this one file" still stores it beside its siblings.
+        if self.base_folder and base.startswith(self.base_folder):
+            return self.base_folder
+        return base
+
     def options(self) -> CompressOptions:
         name = self.name_edit.text().strip()
         # Guarantee a sensible extension even if the user typed a bare name.
         wanted = self._expected_extension(self.selected_format)
-        if os.path.splitext(name)[1].lower() != wanted:
-            if not os.path.splitext(name)[1]:
-                name += wanted
+        if not os.path.splitext(name)[1]:
+            name += wanted
         if not os.path.isabs(name):
             name = os.path.join(
                 self.base_folder or SETTINGS.get("places/last_folder"), name
@@ -893,7 +922,7 @@ class ArchiveDialog(QDialog):
             encrypt_headers=self._encrypt_headers,
             recurse_subfolders=self.recurse_check.isChecked(),
             store_paths=self.paths_check.isChecked(),
-            base_folder=self.base_folder,
+            base_folder=self._storage_base(),
             comment=self.comment_edit.toPlainText(),
             exclude_patterns=excludes,
         )

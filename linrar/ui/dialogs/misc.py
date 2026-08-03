@@ -472,9 +472,15 @@ class FindDialog(QDialog):
 
         form = QFormLayout()
         self.mask_edit = QLineEdit(str(SETTINGS.get("find/mask") or "*.*"))
+        self.mask_edit.setToolTip("A file name mask, e.g.  *.log  or  report*")
         form.addRow("File names to find", self.mask_edit)
-        self.text_edit = QLineEdit()
-        self.text_edit.setPlaceholderText("(optional)")
+        self.text_edit = QLineEdit(str(SETTINGS.get("find/text") or ""))
+        self.text_edit.setPlaceholderText("(optional) text inside the files")
+        self.text_edit.setToolTip(
+            "Leave empty to filter the list by name.\n"
+            "Fill it in and LinRAR reads the files themselves and reports "
+            "every line that contains this text."
+        )
         form.addRow("Text to find", self.text_edit)
         layout.addLayout(form)
 
@@ -482,13 +488,24 @@ class FindDialog(QDialog):
         self.case_check.setChecked(bool(SETTINGS.get("find/case_sensitive")))
         layout.addWidget(self.case_check)
 
-        scope = QLabel(
-            "Searching inside the open archive."
-            if in_archive
-            else "Searching the current folder."
-        )
-        scope.setObjectName("Hint")
-        layout.addWidget(scope)
+        self.recurse_check = QCheckBox("Look in subfolders")
+        self.recurse_check.setChecked(bool(SETTINGS.get("find/recurse")))
+        self.recurse_check.setEnabled(not in_archive)
+        if in_archive:
+            self.recurse_check.setChecked(True)
+            self.recurse_check.setToolTip(
+                "The whole archive is searched, wherever a file sits in it."
+            )
+        layout.addWidget(self.recurse_check)
+
+        self.scope_label = QLabel()
+        self.scope_label.setObjectName("Hint")
+        self.scope_label.setWordWrap(True)
+        self._in_archive = in_archive
+        self.text_edit.textChanged.connect(self._describe_scope)
+        self.recurse_check.toggled.connect(self._describe_scope)
+        self._describe_scope()
+        layout.addWidget(self.scope_label)
 
         layout.addStretch(1)
         buttons = QDialogButtonBox(
@@ -499,9 +516,30 @@ class FindDialog(QDialog):
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
 
+    def _describe_scope(self) -> None:
+        """Say what pressing Find will actually do, before it is pressed."""
+        where = (
+            "the open archive" if self._in_archive
+            else ("this folder and everything under it"
+                  if self.recurse_check.isChecked() else "this folder")
+        )
+        if self.text_edit.text():
+            self.scope_label.setText(
+                f"Reads the matching files in {where} and lists every line "
+                "that contains the text."
+            )
+        else:
+            self.scope_label.setText(
+                f"Filters the list to the names that match, in {where}. "
+                "F5 clears the filter."
+            )
+
     def _accept(self) -> None:
         SETTINGS.set("find/mask", self.mask_edit.text().strip() or "*")
         SETTINGS.set("find/case_sensitive", self.case_check.isChecked())
+        SETTINGS.set("find/text", self.text_edit.text())
+        if self.recurse_check.isEnabled():
+            SETTINGS.set("find/recurse", self.recurse_check.isChecked())
         SETTINGS.sync()
         self.accept()
 
@@ -516,6 +554,21 @@ class FindDialog(QDialog):
     @property
     def case_sensitive(self) -> bool:
         return self.case_check.isChecked()
+
+    @property
+    def recurse(self) -> bool:
+        return self.recurse_check.isChecked()
+
+    def query(self):
+        """This dialog's answer, as the search module wants it."""
+        from ...core.search import SearchQuery
+
+        return SearchQuery(
+            mask=self.mask,
+            text=self.text,
+            case_sensitive=self.case_sensitive,
+            recurse=self.recurse,
+        )
 
 
 class SettingsDialog(QDialog):
@@ -660,7 +713,7 @@ class SettingsDialog(QDialog):
             layout.addWidget(widget)
 
         state = QLabel(
-            f"This copy is LinRAR {version_module.describe()} "
+            f"This copy is LinRAR {version_module.describe_state()} "
             f"({version_module.channel()})."
         )
         state.setObjectName("Hint")
@@ -993,7 +1046,7 @@ class AboutDialog(QDialog):
             "<div style='font-size:15pt; font-weight:bold'>LinRAR "
             "<span style='font-weight:normal'>for Linux</span></div>"
             f"<div style='color:{colors.text_dim}; margin-top:2px'>"
-            f"Version {describe()} &nbsp;·&nbsp; PyQt6</div>"
+            f"Version {version_module.describe_state()} &nbsp;·&nbsp; PyQt6</div>"
             "<div style='margin-top:9px'>A native Linux archive manager with "
             "the classic WinRAR interface, built on top of the <b>rar</b>, "
             "<b>unrar</b> and <b>7z</b> command line tools.</div>"
@@ -1236,7 +1289,20 @@ def _help_overview() -> str:
         "whichever of the two you are looking at.</p>"
         + "<p><b>Alt+Left</b> and <b>Alt+Right</b> are Back and Forward, "
         "<b>Backspace</b> goes up, <b>Ctrl+L</b> lets you type a path, and "
-        "<b>F5</b> lists the folder again and clears any find filter.</p>"
+        "<b>F5</b> lists the folder again and clears any find filter. "
+        "<b>File &gt; Open recent</b> keeps the archives you opened lately, and "
+        "files can be dragged straight out of the list — including out of an "
+        "open archive, which unpacks them on the way.</p>"
+        + _section("Finding things")
+        + "<p><b>Ctrl+F</b> asks for a name mask and, if you want it, some "
+        "text. A mask on its own filters the list in place. Add text and "
+        "LinRAR reads the files themselves — inside the open archive, or "
+        "through the current folder and everything under it — and lists every "
+        "line that contains it.</p>"
+        + "<p><b>Ctrl+K</b> works out CRC32, MD5, SHA-1, SHA-256 and SHA-512 "
+        "for whatever is selected, on disk or inside an archive, in one pass "
+        "over the bytes. Paste a published checksum into the box at the "
+        "bottom and it says which file matches it.</p>"
         + _section("When a file will not open")
         + "<p>Archives are recognised by what is inside them rather than by "
         "their names, so a file opens whatever it is called. When one cannot "
@@ -1292,6 +1358,7 @@ def _help_shortcuts() -> str:
                 ("Alt+S", "Convert the archive to a self-extracting one"),
                 ("Alt+Q", "Convert archives to another format"),
                 ("Alt+G", "Generate a report of the contents"),
+                ("Ctrl+K", "Calculate checksums for the selected files"),
                 ("Del", "Delete the selection"),
                 ("F2", "Rename"),
                 ("F7", "New folder"),

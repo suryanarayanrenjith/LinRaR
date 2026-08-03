@@ -496,16 +496,22 @@ def _make_item(key: str, captions: dict[str, str]) -> QListWidgetItem:
 
 
 #: The toolbar catalogue keeps captions; the icons live here so the picker can
-#: show the same glyph the button will.
+#: show the same glyph the button will.  Every key in
+#: :data:`~linrar.ui.main_window.TOOLBAR_CATALOGUE` must appear here or the
+#: picker offers a blank row for a button that does have an icon — the test
+#: suite checks the two lists still agree.
 _ICONS = {
     "add": "add", "extract_to": "extract-to", "extract_here": "extract",
     "test": "test", "view": "view", "delete": "delete", "rename": "file",
     "find": "find", "wizard": "wizard", "info": "info", "properties": "info",
     "repair": "repair", "comment": "comment", "protect": "protect",
     "lock": "lock", "sfx": "sfx", "convert": "convert", "report": "view",
+    "checksums": "test",
     "open": "archive-small", "close": "archive-small", "up": "up",
+    "back": "back", "forward": "forward",
     "refresh": "refresh", "new_folder": "folder", "change_folder": "disk",
     "favorite": "folder", "password": "key", "passwords": "key",
     "profiles": "add", "benchmark": "test", "dependencies": "package",
     "settings": "settings", "customize": "settings", "help": "help",
+    "update": "download", "theme": "theme-dark",
 }

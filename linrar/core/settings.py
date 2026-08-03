@@ -549,5 +549,20 @@ class Settings:
         items.insert(0, path)
         self.set("history", items[:limit])
 
+    # -- recently opened archives ------------------------------------------
+    # Kept apart from "history", which is the address bar's list of *folders*
+    # and is offered in a control where an archive would be nonsense.
+
+    def recent(self) -> list[str]:
+        return self.string_list("recent")
+
+    def set_recent(self, items: list[str]) -> bool:
+        return self.set("recent", items)
+
+    def push_recent(self, path: str, limit: int = 12) -> None:
+        items = [p for p in self.recent() if p != path]
+        items.insert(0, path)
+        self.set("recent", items[:limit])
+
 
 SETTINGS = Settings()

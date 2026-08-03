@@ -27,6 +27,8 @@ linrar/               the application
 │   ├── convert.py    batch format conversion
 │   ├── profiles.py   saved compression profiles
 │   ├── passwords.py  keyring-backed password store
+│   ├── search.py     finding text inside files and archive members
+│   ├── hashes.py     CRC32/MD5/SHA digests in one pass
 │   ├── report.py     TXT / CSV / HTML listings
 │   ├── tasks.py      QThread workers with progress signals
 │   └── models.py     entries, options, errors
@@ -139,6 +141,31 @@ concrete `-o+` / `-o-` / `-or` flag plus a filtered member list.
 **Zip Slip.** ZIP members are resolved against the destination and refused if
 they escape it, so a crafted archive cannot write outside the target folder.
 
+**Find has two answers, and they want different windows.** A name mask filters
+the listing in place — the file list is already the right shape for that. Text
+produces something the listing cannot show at all: several hits inside one
+file, each with its line. So `core/search.py` returns matches and
+`ui/dialogs/search.py` groups them by file. A file is rejected on its *bytes*
+before it is ever decoded (the needle is encoded in a handful of likely
+encodings and looked for raw), which is what keeps a folder of photographs
+from costing anything; and an archive is unpacked **once**, for every member
+whose name passes the mask, because there is no "read member *n*" in any of
+the tools LinRAR drives.
+
+**Saved passwords are tried before the user is asked.** `PasswordStore`
+has always been able to hold a password; `_StoredPasswords` in the main window
+is what makes holding one worth anything. Each candidate whose mask fits the
+archive is offered once, specific masks before catch-alls, and only when they
+run out does a prompt appear. Reading the store is never fatal — a keyring
+that will not answer must not stop an archive from opening.
+
+**The file list drags out, and never drops in.** `FileListModel.mimeData()`
+publishes real `text/uri-list` URLs; for an archive it calls back into the
+window, which unpacks the selection to a scratch folder first. Dropping is the
+*window's* job — it decides between browsing a folder, opening an archive and
+adding files to one — so the views are `DragOnly`. A view that accepted drops
+itself would swallow them and the window would never see them.
+
 **Administrator rights.** `elevation.py` finds pkexec, sudo or doas,
 authenticates **once** — the password goes to the helper's stdin and is never
 stored — and a keep-alive thread refreshes sudo's own timestamp so the rest of
@@ -165,6 +192,22 @@ style keeps drawing its own.
 **Icons** are inline SVG rendered on demand, so they stay sharp at any size
 without shipping binary assets, and each theme gets its own build with paper
 whites, steel and shadows re-tuned.
+
+**A tool's warning can hide a missing file.** 7-Zip reports a source it could
+not read as a *scan warning*, prints it, carries on with the rest and exits 1
+— a status archive creation has to allow, for the ordinary "one file was
+locked" case. So `_reject_missing_sources` reads the words too, and the
+archive that came out short is reported rather than handed back as a success.
+This is the same lesson as unrar's exit status, one tool along.
+
+**7-Zip has no "exclude paths" switch.** Turning off *Store full folder
+structure* used to hand it bare base names, which it could not find, so
+everything in a subfolder was silently dropped. The paths are given in full —
+they are how it finds the files at all — and the members are flattened
+afterwards with `7z rn`, which for a 7z archive rewrites only the header. A
+base name already claimed keeps its folder: losing one of two files to a
+silent overwrite is worse than storing one of them under its path, and the
+message says which.
 
 ## Two traps that cost real debugging time
 

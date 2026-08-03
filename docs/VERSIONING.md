@@ -51,6 +51,22 @@ In exactly one place:
 __version__ = "2.0.0"
 ```
 
+An update replaces that file underneath a running process, which is the one
+moment when "what version is this?" has two correct answers:
+
+```python
+from linrar import version
+
+version.__version__          # the version running: read at import, fixed
+version.installed_version()  # the version on disk: re-read, follows updates
+version.restart_pending()    # do those two disagree?
+version.describe_state()     # "2.0.0 — 2.1.0 is installed, restart to use it"
+```
+
+`__version__` is what the process *is*; `installed_version()` is what it will
+be next time it starts. An update checker must compare against the second, or
+it will offer a release that has already been installed.
+
 Everything else derives from it — the About box, `linrar --version`, the git
 tag, the tarball's name, the installer's receipt and the update manifest. There
 is no second copy to fall out of step, and `tests/test_version.py` fails if one
@@ -214,9 +230,27 @@ member that needs sanitising has no business in a LinRAR release.
 **Every step after the backup is reversible.** The current tree is copied aside
 before anything is replaced, and any failure — a bad file, a refused
 `install.sh`, an interrupted run, a cancel — puts it back before reporting.
-The last step of an update is to start the newly installed copy in a fresh
-process and ask what version it is; if that answer is wrong the update is
-rolled back even though every individual step succeeded.
+The last steps of an update are to start the newly installed copy in a fresh
+process and ask what version it is, and to check the folder for anything of the
+old version still in it; if either answer is wrong the update is rolled back
+even though every individual step succeeded.
+
+**An update replaces a version; it does not layer one over another.** Each
+release ships `linrar/_files.txt`, an inventory of everything it installs,
+written by `tools/package.sh`. The updater reads the *installed* copy of that
+list to learn what the outgoing version owns, then:
+
+| Set | What happens to it |
+|---|---|
+| in the new release | written, overwriting |
+| in the old release, not in the new | deleted — this is what stops removed files living on for ever |
+| in neither | left alone: the user's own files, `.venv`, the install receipts |
+
+Emptied directories are removed, `__pycache__` is purged so no stale bytecode
+can shadow a deleted module, and when the update is verified the backup and the
+download are deleted too. A version installed before inventories existed falls
+back to LinRAR's own directories (`linrar/`, `tests/`, `docs/`, `tools/`,
+`assets/`, `.github/`) and a fixed list of its own top-level files.
 
 **It refuses what is not its to replace**, and says which: a source checkout
 (`channel() == "source"`, or a `.git` folder), a project folder it cannot write

@@ -542,7 +542,12 @@ def _looks_textual(data: bytes, sample: int = 8192) -> bool:
     if not head:
         return True
     if b"\x00" in head:
-        return False
+        # Every other byte a NUL is not binary, it is UTF-16 without a byte
+        # order mark — which is what a great many text files written on
+        # Windows look like, and they arrive inside downloaded archives all
+        # the time.  Calling those binary showed the user a hex dump of an
+        # ordinary README.
+        return looks_utf16(head) is not None
     printable = sum(
         1 for byte in head
         if 32 <= byte < 127 or byte in (9, 10, 13, 12, 27) or byte >= 128
@@ -550,11 +555,38 @@ def _looks_textual(data: bytes, sample: int = 8192) -> bool:
     return printable / len(head) > 0.90
 
 
+def looks_utf16(data: bytes, sample: int = 8192) -> Optional[str]:
+    """``"utf-16-le"``, ``"utf-16-be"`` or ``None`` for BOM-less UTF-16.
+
+    ASCII text encoded as UTF-16 is one NUL byte for every character, always
+    on the same side of it.  That pattern is unmistakable, and it has to be
+    looked for explicitly: ``bytes.decode("utf-8")`` accepts NUL happily, so a
+    UTF-16 file decodes "successfully" into ``h\\x00e\\x00l\\x00l\\x00o`` and
+    every search for a word in it comes back empty.
+    """
+    head = data[:sample]
+    # Two bytes per character, and enough of them to be sure.
+    if len(head) < 8 or len(head) % 2:
+        head = head[: len(head) - len(head) % 2]
+    if len(head) < 8:
+        return None
+    even = head[0::2]
+    odd = head[1::2]
+    for nulls, others, encoding in (
+        (odd, even, "utf-16-le"),
+        (even, odd, "utf-16-be"),
+    ):
+        if nulls.count(0) >= len(nulls) * 0.9 and others.count(0) <= len(others) * 0.1:
+            return encoding
+    return None
+
+
 def decode(data: bytes) -> str:
     """Turn bytes into text the way a viewer should: never raising.
 
-    Byte-order marks are honoured, UTF-8 is tried, and latin-1 is the floor —
-    it maps every byte to something, so there is always an answer.
+    Byte-order marks are honoured, BOM-less UTF-16 is recognised by its shape,
+    UTF-8 is tried, and latin-1 is the floor — it maps every byte to
+    something, so there is always an answer.
     """
     # The endian-agnostic codecs, not the -le/-be ones: those decode the mark
     # itself into a zero-width space at the front of the text, which then turns
@@ -573,6 +605,11 @@ def decode(data: bytes) -> str:
                 return data.decode(encoding, "replace")
             except (UnicodeDecodeError, LookupError):
                 break
+    # Before UTF-8, because UTF-8 accepts the NUL bytes and answers with
+    # nonsense rather than failing over to something better.
+    wide = looks_utf16(data)
+    if wide:
+        return data.decode(wide, "replace")
     for encoding in ("utf-8", "utf-16", "latin-1"):
         try:
             return data.decode(encoding)

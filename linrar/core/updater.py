@@ -42,7 +42,7 @@ import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 
 from . import elevation
 from .. import version as versions
@@ -58,10 +58,25 @@ RECEIPT_NAME = ".install-receipt"
 #: Never replaced by an update: the virtual environment (rebuilding it would
 #: mean a download and a compile for no reason) and the installer's own
 #: bookkeeping, which describes *this machine* rather than this version.
-PRESERVED = (".venv", "venv", RECEIPT_NAME, ".install-manifest")
+PRESERVED = (".venv", "venv", RECEIPT_NAME, ".install-manifest",
+             ".install-manifest.tmp")
 
 #: Left out of the backup: enormous, reproducible, and never modified by us.
 NOT_BACKED_UP = (".venv", "venv", "__pycache__", ".git")
+
+#: The list of its own files that every release carries, written into it by
+#: ``tools/package.sh``.  An update reads the *installed* copy to learn what
+#: the version being replaced put on disk, and so which files to delete.
+INVENTORY_NAME = os.path.join("linrar", "_files.txt")
+
+#: What LinRAR owns in the project folder when a release did not say.  Used
+#: only as the fallback for a version installed before inventories existed;
+#: anything outside these is treated as the user's and never touched.
+OWNED_DIRECTORIES = ("linrar", "tests", "docs", "tools", "assets", ".github")
+OWNED_FILES = frozenset({
+    "install.sh", "uninstall.sh", "run.sh", "requirements.txt",
+    "README.md", "CHANGELOG.md", "LICENSE", ".gitignore",
+})
 
 #: How long to wait on the network, in seconds.  A check happens at startup
 #: where a hung socket would be felt, so it is deliberately short.
@@ -474,8 +489,14 @@ def check(
     ctx.progress(60)
 
     update = parse_manifest(document)
-    installed = current or versions.__version__
+    # What is *installed*, not what is running.  An update applied earlier in
+    # this session has already replaced the files on disk; comparing against
+    # the version still in memory would offer the very same release again.
+    installed = current or versions.installed_version()
     ctx.log(f"Installed {installed}, published {update.version}")
+    if versions.restart_pending():
+        ctx.log(f"(this process is still running {versions.__version__}; "
+                "a restart is pending)")
 
     if not versions.is_newer(update.version, installed,
                              allow_prerelease=allow_prerelease):
@@ -700,7 +721,8 @@ def unpack(path: str, update: Update, ctx: UpdateContext, *, directory: str = ""
 def _sanity_check(tree: str, update: Update) -> None:
     """Is what came out of the tarball really the LinRAR it claims to be?"""
     for needed in ("install.sh", os.path.join("linrar", "version.py"),
-                   os.path.join("linrar", "_build.py"), "requirements.txt"):
+                   os.path.join("linrar", "_build.py"), INVENTORY_NAME,
+                   "requirements.txt"):
         if not os.path.isfile(os.path.join(tree, needed)):
             raise UpdateError(
                 "The update is missing part of the application and will not "
@@ -754,7 +776,10 @@ def back_up(project: str, ctx: UpdateContext) -> str:
     root = cache_dir()
     os.makedirs(root, exist_ok=True)
     backup = os.path.join(
-        root, f"backup-{versions.__version__}-{time.strftime('%Y%m%d-%H%M%S')}"
+        # Named after the version being replaced -- the one on disk, which
+        # after an earlier update in the same session is not the one running.
+        root,
+        f"backup-{versions.installed_version()}-{time.strftime('%Y%m%d-%H%M%S')}"
     )
     shutil.rmtree(backup, ignore_errors=True)
     ctx.log(f"Copying the current install to {backup}")
@@ -771,33 +796,229 @@ def back_up(project: str, ctx: UpdateContext) -> str:
     return backup
 
 
-def _replace_tree(project: str, source: str) -> None:
-    """Make *project* hold *source*, keeping the entries in PRESERVED."""
-    for name in os.listdir(project):
-        if name in PRESERVED:
-            continue
-        victim = os.path.join(project, name)
-        if os.path.isdir(victim) and not os.path.islink(victim):
-            shutil.rmtree(victim)
-        else:
-            os.remove(victim)
-    for name in os.listdir(source):
-        if name in PRESERVED:
-            continue
-        origin = os.path.join(source, name)
-        target = os.path.join(project, name)
-        if os.path.isdir(origin) and not os.path.islink(origin):
-            shutil.copytree(origin, target, symlinks=True)
-        else:
-            shutil.copy2(origin, target)
+def walk_files(tree: str, skip: Tuple[str, ...] = PRESERVED) -> List[str]:
+    """Every file under *tree*, as paths relative to it, sorted.
+
+    Directories named in *skip* are not descended into at all, so the virtual
+    environment -- tens of thousands of files LinRAR does not own -- is never
+    walked.
+    """
+    found: List[str] = []
+    for root, directories, names in os.walk(tree):
+        directories[:] = [d for d in directories if d not in skip]
+        for name in names:
+            full = os.path.join(root, name)
+            relative = os.path.relpath(full, tree)
+            if relative.split(os.sep)[0] in skip:
+                continue
+            found.append(relative)
+    return sorted(found)
 
 
-def restore(project: str, backup: str) -> None:
-    """Put the backup back.  Best effort, and never raises over a detail."""
+def read_inventory(tree: str) -> Optional[Set[str]]:
+    """The list of files the release in *tree* installed, or ``None``.
+
+    Every release carries one, written into it by ``tools/package.sh``.  It is
+    what makes an update able to delete exactly the files the old version
+    brought and nothing else: without it there is no way to tell a file the
+    previous release left behind from one the user put there themselves.
+    """
+    path = os.path.join(tree, INVENTORY_NAME)
     try:
-        _replace_tree(project, backup)
+        with open(path, encoding="utf-8") as handle:
+            listed = {
+                line.strip() for line in handle
+                if line.strip() and not line.startswith("#")
+            }
     except OSError:
-        pass
+        return None
+    return listed or None
+
+
+def _fallback_inventory(project: str) -> Set[str]:
+    """What to treat as the old release when it carried no inventory.
+
+    Only the folders and top-level files LinRAR is known to install.  Anything
+    else in the project folder is somebody's own, and an update is not the
+    moment to find out the hard way which.
+    """
+    owned: Set[str] = set()
+    for relative in walk_files(project):
+        top = relative.split(os.sep)[0]
+        if top in OWNED_DIRECTORIES or relative in OWNED_FILES:
+            owned.add(relative)
+    return owned
+
+
+def _remove_file(project: str, relative: str) -> bool:
+    target = os.path.join(project, relative)
+    try:
+        if os.path.islink(target) or os.path.isfile(target):
+            os.remove(target)
+            return True
+        if os.path.isdir(target):
+            shutil.rmtree(target)
+            return True
+    except OSError:
+        return False
+    return False
+
+
+def purge_bytecode(project: str) -> int:
+    """Delete every ``__pycache__`` under the project.  Returns how many.
+
+    Compiled bytecode is not in any release's inventory -- it is made by
+    running the program -- so nothing else would ever remove it, and what it
+    holds is compiled copies of files the update has just replaced or deleted.
+    Leaving it is how a module that no longer exists goes on being importable.
+    """
+    removed = 0
+    for root, directories, _names in os.walk(project, topdown=True):
+        directories[:] = [d for d in directories if d not in PRESERVED]
+        for name in list(directories):
+            if name == "__pycache__":
+                shutil.rmtree(os.path.join(root, name), ignore_errors=True)
+                directories.remove(name)
+                removed += 1
+    return removed
+
+
+def prune_empty_directories(project: str) -> int:
+    """Remove directories the update emptied.  Returns how many.
+
+    A release that drops a whole folder leaves the folder itself behind once
+    its files are deleted, which is exactly the kind of debris that
+    accumulates one update at a time.
+    """
+    removed = 0
+    for root, directories, _names in os.walk(project, topdown=False):
+        if os.path.relpath(root, project).split(os.sep)[0] in PRESERVED:
+            continue
+        if root == project:
+            continue
+        try:
+            if not os.listdir(root):
+                os.rmdir(root)
+                removed += 1
+        except OSError:
+            continue
+    return removed
+
+
+def apply_tree(project: str, source: str, ctx: UpdateContext) -> Tuple[int, int]:
+    """Make *project* hold the release in *source*, and nothing else of it.
+
+    Not a wipe and a recopy.  Three sets are involved:
+
+    * what the new release contains -- copied in, overwriting;
+    * what the old release contained and the new one does not -- deleted,
+      which is what stops a file that was removed upstream from living on
+      forever in every install that was ever updated;
+    * everything else in the folder -- the user's own files, the virtual
+      environment, the installer's receipts -- left exactly alone.
+
+    Returns ``(written, removed)``.
+    """
+    new_files = set(walk_files(source))
+    if not new_files:
+        raise UpdateError("The update contains no files.")
+
+    inventory = read_inventory(project)
+    if inventory is None:
+        old_files = _fallback_inventory(project)
+        ctx.log(
+            f"The installed version carries no file list; falling back to "
+            f"LinRAR's own folders ({len(old_files)} files)."
+        )
+    else:
+        old_files = inventory
+        ctx.log(f"The installed version lists {len(old_files)} files.")
+
+    # Copy first, delete second.  If anything fails part way through, a tree
+    # with both versions' files in it can still be rolled back; one that has
+    # been emptied first cannot even be inspected.
+    written = 0
+    for relative in sorted(new_files):
+        origin = os.path.join(source, relative)
+        target = os.path.join(project, relative)
+        os.makedirs(os.path.dirname(target), exist_ok=True)
+        if os.path.islink(target) or os.path.exists(target):
+            _remove_file(project, relative)
+        shutil.copy2(origin, target, follow_symlinks=False)
+        written += 1
+
+    stale = sorted(old_files - new_files)
+    removed = 0
+    for relative in stale:
+        if relative.split(os.sep)[0] in PRESERVED:
+            continue
+        if _remove_file(project, relative):
+            removed += 1
+            ctx.log(f"  removed {relative}")
+
+    removed += purge_bytecode(project)
+    prune_empty_directories(project)
+    ctx.log(f"{written} files written, {removed} left over from the old "
+            f"version removed.")
+    return written, removed
+
+
+def leftovers(project: str, source: str = "") -> List[str]:
+    """Files in *project* that belong to neither the release nor the user.
+
+    Used as the update's own post-condition: after applying a release, nothing
+    should remain that the release did not put there, except the handful of
+    things in :data:`PRESERVED` and whatever the user keeps in the folder.
+    """
+    inventory = read_inventory(project)
+    if inventory is None and source:
+        inventory = set(walk_files(source))
+    if inventory is None:
+        return []
+    strays = []
+    for relative in walk_files(project):
+        if relative in inventory:
+            continue
+        top = relative.split(os.sep)[0]
+        if top in PRESERVED:
+            continue
+        # Compiled bytecode is runtime state, not something a release ships.
+        # purge_bytecode() deals with it; counting it here would report a
+        # tree as dirty every time the program had been run in it.
+        if "__pycache__" in relative.split(os.sep):
+            continue
+        # Only what LinRAR itself installs counts as a stray.  A file the user
+        # keeps in the project folder is not debris, and an update that tidied
+        # it away would be a far worse bug than the one being fixed here.
+        if top in OWNED_DIRECTORIES or relative in OWNED_FILES:
+            strays.append(relative)
+    return strays
+
+
+def restore(project: str, backup: str, ctx: Optional[UpdateContext] = None) -> None:
+    """Put the backup back.  Best effort, and never raises over a detail.
+
+    The reverse of :func:`apply_tree`, and deliberately less clever: at this
+    point something has already gone wrong, so it copies everything the backup
+    holds over whatever is there and removes anything LinRAR owns that the
+    backup does not have.
+    """
+    ctx = ctx or UpdateContext()
+    try:
+        old_files = set(walk_files(backup))
+        for relative in sorted(old_files):
+            target = os.path.join(project, relative)
+            os.makedirs(os.path.dirname(target), exist_ok=True)
+            if os.path.islink(target) or os.path.exists(target):
+                _remove_file(project, relative)
+            shutil.copy2(os.path.join(backup, relative), target,
+                         follow_symlinks=False)
+        for relative in sorted(_fallback_inventory(project) - old_files):
+            _remove_file(project, relative)
+        purge_bytecode(project)
+        prune_empty_directories(project)
+    except OSError as error:
+        ctx.log(f"The rollback hit a problem: {error}")
 
 
 def _run(argv: List[str], ctx: UpdateContext, cwd: str, timeout: int = 900) -> int:
@@ -874,8 +1095,12 @@ def _verify_installed(project: str, update: Update, ctx: UpdateContext) -> None:
     python = os.path.join(project, ".venv", "bin", "python")
     if not os.path.isfile(python):
         python = sys.executable
+    # -B: do not write bytecode.  Checking the new version must not be the
+    # thing that scatters __pycache__ through a tree the update has just
+    # finished tidying.
     finished = subprocess.run(
-        [python, "-c", "import linrar, sys; sys.stdout.write(linrar.__version__)"],
+        [python, "-B", "-c",
+         "import linrar, sys; sys.stdout.write(linrar.__version__)"],
         cwd=project, capture_output=True, text=True, timeout=120,
     )
     reported = finished.stdout.strip()
@@ -895,11 +1120,15 @@ def install(
     *,
     elevate: str = "auto",
     run_installer: bool = True,
+    keep_backup: bool = False,
 ) -> str:
     """Replace *project* with *unpacked*, rolling back if anything fails.
 
-    Returns the backup folder, which is left on disk: an update that went in
-    cleanly can still turn out to have been a bad idea an hour later.
+    The backup exists for the length of the update and no longer: once the new
+    version has been installed *and* proved that it runs, it is deleted along
+    with the download it came from, because an update that leaves a copy of the
+    old version lying about has not finished tidying up after itself.  Returns
+    "" on success, and the backup path only in the case where one was kept.
     """
     backup = back_up(project, ctx)
 
@@ -907,7 +1136,7 @@ def install(
     receipt = read_receipt(project)
     try:
         ctx.log(f"Replacing the files in {project}")
-        _replace_tree(project, unpacked)
+        apply_tree(project, unpacked, ctx)
         ctx.progress(25)
 
         _refresh_requirements(project, backup, ctx)
@@ -937,40 +1166,105 @@ def install(
         ctx.progress(80)
 
         _verify_installed(project, update, ctx)
+        ctx.progress(90)
+
+        # The update's own post-condition.  Everything above can succeed and
+        # still leave a file from the old version sitting in the tree; this is
+        # what notices, and it runs before the backup is thrown away so that
+        # noticing is still actionable.
+        strays = leftovers(project, unpacked)
+        if strays:
+            ctx.log(f"{len(strays)} file(s) from the old version survived; "
+                    "removing them.")
+            for relative in strays:
+                _remove_file(project, relative)
+                ctx.log(f"  removed {relative}")
+            prune_empty_directories(project)
+            still = leftovers(project, unpacked)
+            if still:  # noqa: SIM102 - the message below needs the list
+                raise UpdateError(
+                    "The old version could not be cleared out of the folder.",
+                    "These files are still there and are not part of "
+                    f"{update.version}:\n  " + "\n  ".join(still[:20]),
+                )
+        # install.sh ran the new version once to prove it starts, which will
+        # have compiled it.  Left alone that is harmless, but "nothing behind"
+        # should mean nothing.
+        purge_bytecode(project)
+        prune_empty_directories(project)
         ctx.progress(100)
     except Cancelled:
         ctx.log("Cancelled: putting the previous version back.")
-        restore(project, backup)
+        restore(project, backup, ctx)
         raise
     except UpdateError:
         ctx.log("Something went wrong: putting the previous version back.")
-        restore(project, backup)
+        restore(project, backup, ctx)
         raise
     except Exception as error:  # noqa: BLE001 - a rollback must cover anything
         ctx.log(f"Unexpected failure ({error}): putting the previous version back.")
-        restore(project, backup)
+        restore(project, backup, ctx)
         raise UpdateError("The update failed and was rolled back.",
                           str(error)) from None
 
     ctx.begin("done")
     ctx.log(f"LinRAR {update.version} is installed.")
-    ctx.log(f"The previous version is kept at {backup}")
+    if keep_backup:
+        ctx.log(f"The previous version was kept at {backup}")
+        ctx.progress(100)
+        return backup
+    shutil.rmtree(backup, ignore_errors=True)
+    ctx.log("The previous version has been removed; nothing is left behind.")
     ctx.progress(100)
-    return backup
+    return ""
 
 
-def prune_cache(keep: int = 1) -> None:
-    """Delete all but the newest *keep* backups, and every stale download."""
+def prune_cache(keep_backups: int = 0) -> int:
+    """Empty the update cache.  Returns how many entries went.
+
+    Called after a successful update, when everything in there has served its
+    purpose: the tarball has been installed, the tree it was unpacked into has
+    been copied over the project, and the backup is a copy of a version that no
+    longer exists anywhere else.  Keeping any of it would mean every update
+    left a few megabytes behind for ever.
+    """
     root = cache_dir()
+    removed = 0
     try:
-        entries = sorted(
-            (name for name in os.listdir(root) if name.startswith("backup-")),
-            reverse=True,
-        )
+        entries = sorted(os.listdir(root), reverse=True)
     except OSError:
-        return
-    for name in entries[keep:]:
-        shutil.rmtree(os.path.join(root, name), ignore_errors=True)
+        return 0
+    backups = [name for name in entries if name.startswith("backup-")]
+    for name in entries:
+        if name in backups[:keep_backups]:
+            continue
+        target = os.path.join(root, name)
+        try:
+            if os.path.isdir(target) and not os.path.islink(target):
+                shutil.rmtree(target)
+            else:
+                os.remove(target)
+            removed += 1
+        except OSError:
+            continue
+    return removed
+
+
+def _free_space(path: str) -> int:
+    try:
+        return shutil.disk_usage(path).free
+    except OSError:                       # pragma: no cover - exotic filesystem
+        return 0
+
+
+def _tree_size(path: str) -> int:
+    total = 0
+    for relative in walk_files(path):
+        try:
+            total += os.path.getsize(os.path.join(path, relative))
+        except OSError:
+            continue
+    return total
 
 
 def run_update(
@@ -979,24 +1273,49 @@ def run_update(
     *,
     project: str = "",
     elevate: str = "auto",
+    keep_backup: bool = False,
 ) -> str:
-    """Download, verify, unpack and install *update*.  Returns the backup path.
+    """Download, verify, unpack and install *update*.
 
     The whole pipeline in one call, so the window only has to know about
-    stages and the worker thread only has to call one function.
+    stages and the worker thread only has to call one function.  When it
+    returns, the project folder holds the new version and nothing else of the
+    old one, and the update cache is empty.
     """
     project = project or PROJECT_DIR
     allowed = eligibility(project)
     if not allowed:
         raise UpdateError(allowed.reason, allowed.suggestion)
 
+    # Anything still in the cache is from a run that did not finish -- a
+    # cancelled download, a half-unpacked tree.  Clearing it first means the
+    # space check below is honest and no stale file can be mistaken for part
+    # of this update.
+    stale = prune_cache()
+    if stale:
+        ctx.log(f"Cleared {stale} leftover item(s) from a previous run.")
+
+    # A copy of the project, the download and the tree it unpacks into all
+    # have to fit at once.  Finding that out now beats finding it out with the
+    # old version already deleted.
+    needed = _tree_size(project) + update.size * 3 + 32 * 1024 * 1024
+    free = _free_space(cache_dir())
+    if free and free < needed:
+        raise UpdateError(
+            "There is not enough free space to install this update safely.",
+            f"About {needed // (1024 * 1024)} MB is needed for the download, "
+            f"the unpacked copy and a backup of the current version; "
+            f"{free // (1024 * 1024)} MB is free.",
+        )
+
     archive = download(update, ctx)
     verify(archive, update, ctx)
     unpacked = unpack(archive, update, ctx)
-    backup = install(project, unpacked, update, ctx, elevate=elevate)
+    backup = install(project, unpacked, update, ctx, elevate=elevate,
+                     keep_backup=keep_backup)
 
-    shutil.rmtree(os.path.dirname(unpacked), ignore_errors=True)
-    prune_cache()
+    remaining = prune_cache(keep_backups=1 if keep_backup else 0)
+    ctx.log(f"Update cache cleared ({remaining} item(s) removed).")
     return backup
 
 

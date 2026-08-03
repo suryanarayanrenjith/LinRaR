@@ -4,6 +4,109 @@ All notable changes to LinRAR, newest first.
 
 ## Unreleased
 
+### Find reads the files, not just their names
+
+- **The "Text to find" box does something.** It has been on the Find dialog
+  all along, and nothing ever read it: the window filtered on the *name* mask
+  and the text was thrown away, so typing a word and pressing Find quietly did
+  nothing. Find now reads the matching files — through the current folder and
+  everything under it, or through the open archive — and lists every line that
+  contains the text, grouped by file, with the line numbers. **Go to file**
+  takes the window to whichever one you pick.
+- A name mask on its own still filters the list in place, as it did; the
+  dialog says which of the two pressing Find will do before you press it.
+- An archive is unpacked **once** for a search rather than once per member,
+  which matters enormously on a solid archive.
+- Files are rejected on their raw bytes before anything is decoded, so a
+  folder of photographs costs nothing to search; one too large to search says
+  so rather than being silently skipped.
+- **Fixed: UTF-16 text was treated as binary.** A file written on Windows
+  without a byte order mark decodes "successfully" as UTF-8 into
+  `h\0e\0l\0l\0o`, so the viewer showed an ordinary README as a hex dump and
+  no search could ever find a word in one.
+
+### Checksums
+
+- **Tools → Calculate checksums (Ctrl+K)** works out CRC32, MD5, SHA-1,
+  SHA-256 and SHA-512 for the selected files — on disk or inside an archive —
+  in a single pass over the bytes, so asking for five costs no more reading
+  than asking for one.
+- Paste a published checksum (or a whole `sha256sum` line) into the box at the
+  bottom and it names the file that matches it and which algorithm it was.
+- The result copies or saves either as a table of everything, or in the exact
+  `sha256sum` layout, so it can be fed straight to `sha256sum -c`.
+
+### Saved passwords are finally used
+
+- **Fixed: *Tools → Organize passwords* stored passwords nobody ever read.**
+  An archive a saved password would have opened still stopped and asked for
+  one. Saved passwords whose mask fits the archive are now tried first, in
+  order — a specific mask before a catch-all — and only when they are
+  exhausted is the question asked. The status bar says when one was used.
+- The password prompt has a **Remember this password** box, so saving one no
+  longer means a separate trip to a management dialog.
+
+### Dragging files out
+
+- **Fixed: dragging out of the file list did nothing.** Dragging was switched
+  on, but the list published Qt's private mime type, which no file manager
+  understands. It now carries real file URLs, with the copy hint both GNOME
+  and KDE read.
+- Members can be dragged **out of an open archive**: they are unpacked on the
+  way, and a selected folder arrives as a folder. Very large selections are
+  refused with a pointer to Extract, which has a progress window and a Cancel.
+- Dropping *into* LinRAR over the file list works again: the list used to
+  swallow the drop before the window could act on it.
+
+### Other fixes
+
+- **Column widths survive a restart.** The saved header state was restored and
+  then immediately overwritten by the factory widths, because the first
+  listing is built after the state is read.
+- **"Reset the interface" now resets the columns too** — widths, order and
+  sort indicator. `QHeaderView.reset()` is the model-reset slot and does
+  nothing to section sizes.
+- **7-Zip archives no longer lose files when "Store full folder structure" is
+  off.** 7z has no exclude-paths switch and was handed bare base names, so it
+  could not find anything in a subfolder, said so as a *warning*, exited 1 and
+  produced an archive quietly missing them. The paths are now given in full
+  and flattened afterwards, and a base name already taken keeps its folder
+  rather than overwriting the other file.
+- **A file 7-Zip could not read is reported.** Its scan warnings sit behind an
+  exit status that archive creation has to allow, so the words are now read as
+  well as the status.
+- **ZIP archives the built-in reader will not touch are handed to 7-Zip** — a
+  spanned archive, one behind a self-extracting stub, one with a damaged
+  central directory. When neither can open it, the message says so in ZIP
+  terms rather than passing through `exit code 2`.
+- **The default compression profile no longer undoes the remembered
+  settings.** The profile LinRAR ships as "Default" holds the factory values
+  and was applied over the dialog every time, so changing the method to Best,
+  making an archive and opening the dialog again put it back to Normal.
+- **A profiles file written by a newer LinRAR is no longer discarded whole**
+  because of one unrecognised key.
+- The remembered **dictionary size** is restored again; it was saved and never
+  read back.
+- The **Archive dialog measures the files it actually has.** Files added on
+  the Files tab were measured against the folder the dialog opened on, which
+  produced `../..` member paths.
+- **Properties shows the right icon for a file on disk** instead of a folder.
+- An operation that outlives its progress window is now adopted and reported
+  when it really finishes, instead of being announced as a success while it
+  is still running.
+- Toggling hidden files no longer re-reads the open archive — and no longer
+  asks for its password again — for a setting that cannot change what is
+  shown.
+- The Customize picker knows about every toolbar button; Back, Forward,
+  Update and Theme were offered without their icons.
+
+### Small additions
+
+- **File → Open recent** keeps the archives you opened lately, kept apart from
+  the address bar's folder history.
+- The status bar shows **free space** on the filesystem the current folder
+  lives on, with the total and the percentage used in its tooltip.
+
 ### Extracting behaves the way WinRAR's does
 
 - **Extracting no longer opens the archive in the background.** Unpacking from
@@ -260,6 +363,54 @@ All notable changes to LinRAR, newest first.
   reason, rather than offering an Install button that cannot succeed, and
   building an AppImage refuses with an explanation instead of downloading a
   404. The installer names the machine, and records it in the receipt.
+
+### The version number keeps up with the update
+
+- **An update replaces `linrar/version.py` underneath a running process**, so
+  from that moment there are two versions on the machine: the one in memory,
+  which goes on running until LinRAR is restarted, and the one on disk, which
+  is what starts next time. Everything that reports a version now knows which
+  of the two it means. `version.installed_version()` reads the file rather than
+  the module, so it answers for the copy on disk however often it has been
+  replaced.
+- **The About box, Settings and the update window say both** while a restart is
+  pending — *"2.0.0 — 2.1.0 is installed, restart to use it"* — rather than
+  going on showing the old number as though the update had not worked.
+- **Fixed: checking again after installing offered the same release twice.**
+  The check compared the server's version against the one still in memory, so
+  a user who updated without restarting was told the update they had just
+  applied was available. It compares against what is installed now, and the
+  start-up check does not run at all while a restart is pending.
+- The backup folder is named after the version being replaced — the one on
+  disk — so a second update in the same session no longer names it after a
+  version that was overwritten an hour ago.
+
+### Updating replaces a version rather than piling one on top of another
+
+- **Every release carries a list of its own files**, written into it when it is
+  built. An update reads the installed copy's list, so it knows precisely what
+  the version it is replacing put on disk — and can delete exactly that.
+- **A file the new release no longer ships is deleted.** Previously the update
+  copied the new version over the old one, so a module that had been removed
+  upstream lived on for ever in every install that had ever been updated.
+  Folders the release dropped go with their contents, and directories the
+  update empties are removed rather than left standing.
+- **Stale compiled bytecode is cleared**, so a module that no longer exists
+  cannot go on being importable from a leftover `.pyc`.
+- **The backup and the download are removed when the update is over**, once the
+  new version has proved it runs. An update used to leave a copy of the old
+  version and its tarball in the cache indefinitely; now the cache is emptied,
+  and anything a cancelled run left behind is cleared before the next one
+  starts.
+- **Files the user keeps in the project folder are never touched.** They are on
+  no release's list, and the updater only removes what it recognises as its
+  own. A version installed before the lists existed falls back to LinRAR's own
+  folders and a fixed list of its own files, and leaves everything else alone.
+- **The update checks its own work.** After installing, it looks for anything
+  of the old version still in the folder; if it finds something it cannot clear,
+  the whole update is rolled back rather than declared finished. There is also
+  a free-space check before the download, so a full disk stops an update
+  instead of interrupting one.
 
 ### LinRAR updates itself
 

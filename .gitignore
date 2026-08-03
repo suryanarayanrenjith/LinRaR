@@ -11,6 +11,7 @@ venv/
 # date, tag).  It says "this copy was published"; a working tree never was, so
 # committing it would make every clone claim to be a release.
 linrar/_build.py
+linrar/_files.txt
 
 # --- Python ---------------------------------------------------------------
 __pycache__/

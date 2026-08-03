@@ -296,6 +296,80 @@ try:
 except OperationError:
     check("7z rejects non-7z format", True)
 
+# ---------------- a ZIP zipfile will not touch ----------------------------
+# zipfile is stricter than the format is in practice, and refusing outright
+# told the user their archive was broken when the reader was not up to it.
+print("== zip fallback")
+plain_zip = f"{root}/fallback.zip"
+zipb.create([f"{src}/a.txt"], CompressOptions(
+    archive_path=plain_zip, format=ArchiveFormat.ZIP, base_folder=src))
+stubbed = f"{root}/stubbed.zip"
+with open(stubbed, "wb") as out:
+    out.write(b"\x7fELF" + b"\x00" * 4096)
+    with open(plain_zip, "rb") as source_zip:
+        out.write(source_zip.read())
+check("a ZIP behind an executable stub still opens",
+      [e.name for e in zipb.read_info(stubbed).entries] == ["a.txt"],
+      [e.name for e in zipb.read_info(stubbed).entries])
+
+truncated = f"{root}/truncated.zip"
+with open(plain_zip, "rb") as source_zip:
+    payload = source_zip.read()
+with open(truncated, "wb") as out:
+    out.write(payload[: len(payload) - 8])
+try:
+    zipb.read_info(truncated)
+    check("a genuinely damaged ZIP is still refused", False, "no error raised")
+except OperationError as exc:
+    check("a genuinely damaged ZIP is still refused", True)
+    check("and the message talks about the ZIP, not about 7-Zip's exit code",
+          "ZIP archive" in str(exc) and "exit code" not in str(exc),
+          str(exc).splitlines()[0])
+
+# ---------------- 7z without stored paths --------------------------------
+# 7-Zip has no "exclude paths" switch, and LinRAR used to honour the option by
+# handing it bare base names.  7z could not find a nested file under one, said
+# so as a *warning*, exited 1 (which create has to allow) and produced an
+# archive quietly missing everything that was not at the top level.
+print("== 7z flatten")
+flat = f"{root}/flat.7z"
+seven.create([f"{src}/a.txt", f"{src}/sub/deep.txt"], CompressOptions(
+    archive_path=flat, format=ArchiveFormat.SEVENZIP,
+    store_paths=False, base_folder=src))
+flat_names = sorted(e.name for e in seven.read_info(flat).entries)
+check("a nested file survives 'do not store paths'",
+      "deep.txt" in flat_names, flat_names)
+check("stored under its bare name", "sub/deep.txt" not in flat_names, flat_names)
+check("alongside the top-level one", "a.txt" in flat_names, flat_names)
+check("and the emptied folder is not left behind",
+      not any(e.is_dir for e in seven.read_info(flat).entries), flat_names)
+
+# Two files with one base name cannot both be flattened; the loser keeps its
+# folder rather than silently overwriting the winner.
+clash = f"{root}/clash.7z"
+notes = []
+from linrar.core.backends.base import TaskContext as _Ctx
+seven.create([f"{src}/a.txt", f"{src}/nest/a.txt"], CompressOptions(
+    archive_path=clash, format=ArchiveFormat.SEVENZIP,
+    store_paths=False, base_folder=src), _Ctx(on_message=notes.append))
+clash_names = sorted(e.name for e in seven.read_info(clash).entries
+                     if not e.is_dir)
+check("a name clash keeps both files",
+      clash_names == ["a.txt", "nest/a.txt"], clash_names)
+check("and says which one kept its folder",
+      any("kept its folder" in n for n in notes),
+      [n for n in notes if "kept" in n])
+
+try:
+    seven.create([f"{src}/does-not-exist.txt"], CompressOptions(
+        archive_path=f"{root}/short.7z", format=ArchiveFormat.SEVENZIP,
+        base_folder=src))
+    check("7z reports a source it could not read", False,
+          "no error raised for a missing input")
+except OperationError as exc:
+    check("7z reports a source it could not read",
+          "incomplete" in str(exc), str(exc)[:120])
+
 # ---------------- convert ----------------------------------------------
 print("== convert")
 res = convert_mod.convert_archive(arc, convert_mod.ConvertOptions(

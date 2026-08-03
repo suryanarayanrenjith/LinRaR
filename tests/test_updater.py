@@ -372,8 +372,25 @@ open(os.path.join(installed, "user-notes.txt"), "w").write("mine")
 check("the scratch install starts out older",
       updater._version_of(installed) == "98.0.0")
 
+# Debris of every kind the old version could have left: a module the new
+# release no longer ships, a whole folder it dropped, and compiled bytecode
+# for both.  None of it may survive the update.
+GONE_MODULE = os.path.join(installed, "linrar", "retired.py")
+GONE_DIR = os.path.join(installed, "linrar", "obsolete")
+open(GONE_MODULE, "w").write("# a module the next release deletes\n")
+os.makedirs(GONE_DIR)
+open(os.path.join(GONE_DIR, "old.py"), "w").write("# an entire folder, gone\n")
+os.makedirs(os.path.join(installed, "linrar", "__pycache__"), exist_ok=True)
+open(os.path.join(installed, "linrar", "__pycache__", "retired.cpython-39.pyc"),
+     "wb").write(b"stale bytecode")
+# The installed version's own inventory has to list them, because that is how
+# the updater knows they were its and not the user's.
+with open(os.path.join(installed, updater.INVENTORY_NAME), "a") as handle:
+    handle.write("linrar/retired.py\nlinrar/obsolete/old.py\n")
+
 ctx = silent()
-backup = updater.install(installed, unpacked, found, ctx, run_installer=False)
+backup = updater.install(installed, unpacked, found, ctx, run_installer=False,
+                         keep_backup=True)
 check("the install reports where the backup went", os.path.isdir(backup))
 check("the tree is now the new version",
       updater._version_of(installed) == NEW_VERSION)
@@ -386,8 +403,42 @@ check("the backup does not carry a copy of the venv",
 check("it said it verified the result",
       any("reports version" in line for line in ctx.log_lines),
       ctx.log_lines[-3:])
-check("the stages it went through were announced",
-      updater._version_of(installed) == NEW_VERSION)
+
+print("\n== nothing of the old version is left behind")
+check("a module the new release dropped is gone",
+      not os.path.exists(GONE_MODULE))
+check("a folder it dropped is gone too", not os.path.exists(GONE_DIR))
+check("and the folder itself, not just its contents",
+      not os.path.isdir(GONE_DIR))
+check("stale bytecode is gone",
+      not os.path.exists(os.path.join(installed, "linrar", "__pycache__")))
+check("no __pycache__ survives anywhere",
+      not any("__pycache__" in path
+              for path in updater.walk_files(installed)))
+check("the updater says what it removed",
+      any("removed linrar/retired.py" in line for line in ctx.log_lines),
+      [line for line in ctx.log_lines if "removed" in line][:4])
+check("its own post-condition check finds nothing left",
+      updater.leftovers(installed, unpacked) == [],
+      updater.leftovers(installed, unpacked))
+
+installed_files = set(updater.walk_files(installed))
+release_files = set(updater.walk_files(unpacked))
+extra = installed_files - release_files
+check("the folder holds the release and the user's own files, and no more",
+      extra == {"user-notes.txt"}, sorted(extra))
+check("every file the release ships is there",
+      release_files <= installed_files,
+      sorted(release_files - installed_files)[:5])
+check("the file the user put there was never touched",
+      open(os.path.join(installed, "user-notes.txt")).read() == "mine")
+
+check("the new version's inventory came with it",
+      os.path.isfile(os.path.join(installed, updater.INVENTORY_NAME)))
+inventory = updater.read_inventory(installed)
+check("and it lists what is actually there",
+      inventory is not None and inventory == release_files,
+      sorted((inventory or set()) ^ release_files)[:5])
 
 print("\n== rolling back")
 updater.restore(installed, backup)
@@ -397,6 +448,8 @@ check("and the file the user left there comes back too",
       os.path.isfile(os.path.join(installed, "user-notes.txt")))
 check("while the venv was never involved",
       os.path.isfile(os.path.join(installed, ".venv", "marker")))
+check("the dropped module comes back with it",
+      os.path.isfile(GONE_MODULE))
 
 print("\n== a failure rolls itself back")
 broken = os.path.join(SCRATCH, "broken-tree")
@@ -438,6 +491,104 @@ check("and leaves no half-file behind",
       not any(name.endswith(".part") for name in
               os.listdir(os.path.join(SCRATCH, "cancelled"))
               if os.path.isdir(os.path.join(SCRATCH, "cancelled"))))
+
+print("\n== the version follows the files, not the process")
+# An update replaces linrar/version.py underneath a running interpreter.  From
+# then on the version in memory and the version on disk are different numbers,
+# and everything that reports one has to know which it means.
+version_file = os.path.join(ROOT, "linrar", "version.py")
+original = open(version_file).read()
+try:
+    check("with nothing changed, the two agree",
+          versions.installed_version() == versions.__version__)
+    check("and no restart is pending", not versions.restart_pending())
+    check("describe_state says just the version",
+          versions.describe_state() == versions.describe())
+
+    with open(version_file, "w") as handle:
+        handle.write(original.replace(
+            f'__version__ = "{versions.__version__}"',
+            '__version__ = "97.6.5"'))
+    check("the installed version follows the file",
+          versions.installed_version() == "97.6.5",
+          versions.installed_version())
+    check("the running version does not",
+          versions.__version__ != "97.6.5")
+    check("so a restart is pending", versions.restart_pending())
+    state = versions.describe_state()
+    check("and what the user is shown says both",
+          "97.6.5" in state and versions.__version__ in state, state)
+    check("it explains what to do about it", "restart" in state.lower(), state)
+
+    # The bug this prevents: having installed the newest release without
+    # restarting, checking again would compare the server's version against
+    # the one still in memory and offer the very same release a second time.
+    with open(version_file, "w") as handle:
+        handle.write(original.replace(
+            f'__version__ = "{versions.__version__}"',
+            f'__version__ = "{NEW_VERSION}"'))
+    check("the installed version is now the one the server publishes",
+          versions.installed_version() == NEW_VERSION)
+    check("and it is still not the one running", versions.restart_pending())
+    offered = updater.check(silent(), url=f"{BASE}/latest.json")
+    check("so the release just installed is not offered again",
+          offered is None, offered.version if offered else None)
+    check("though the process itself is still on the older version",
+          versions.is_newer(NEW_VERSION, versions.__version__))
+
+    with open(version_file, "w") as handle:
+        handle.write(original.replace(
+            f'__version__ = "{versions.__version__}"', '__version__ = "not.a.version"'))
+    check("an unreadable version on disk falls back to the running one",
+          versions.installed_version() == versions.__version__,
+          versions.installed_version())
+finally:
+    with open(version_file, "w") as handle:
+        handle.write(original)
+check("the file is put back", versions.installed_version() == versions.__version__)
+
+print("\n== the cache does not grow with every update")
+cache = updater.cache_dir()
+os.makedirs(cache, exist_ok=True)
+for name in ("backup-1.0.0-20260101-000000", "backup-2.0.0-20260102-000000",
+             "99.1.0"):
+    os.makedirs(os.path.join(cache, name), exist_ok=True)
+    open(os.path.join(cache, name, "junk"), "w").write("x")
+open(os.path.join(cache, "stray.tar.gz"), "wb").write(b"leftover download")
+check("there is something to clear", len(os.listdir(cache)) >= 4)
+gone = updater.prune_cache()
+check("clearing it reports what went", gone >= 4, gone)
+check("and the cache is empty afterwards", os.listdir(cache) == [],
+      os.listdir(cache))
+for name in ("backup-1.0.0-20260101-000000", "backup-2.0.0-20260102-000000"):
+    os.makedirs(os.path.join(cache, name), exist_ok=True)
+updater.prune_cache(keep_backups=1)
+check("keeping one backup keeps the newest",
+      os.listdir(cache) == ["backup-2.0.0-20260102-000000"],
+      os.listdir(cache))
+updater.prune_cache()
+
+print("\n== an update that cannot fit is refused before anything is deleted")
+huge = Update(version="99.9.9", artifact=Artifact(
+    name="x.tar.gz", kind="source", size=10 ** 15, sha256="d" * 64,
+    url="https://example.invalid/x.tar.gz"))
+real_space, real_eligibility = updater._free_space, updater.eligibility
+try:
+    updater._free_space = lambda _path: 50 * 1024 * 1024
+    updater.eligibility = lambda *_a, **_k: updater.Eligibility(True)
+    try:
+        updater.run_update(huge, silent(), project=installed)
+        check("a full disk stops the update", False, "it went ahead")
+    except UpdateError as error:
+        check("a full disk stops the update", "free space" in str(error),
+              str(error))
+    check("and the installed version is untouched",
+          updater._version_of(installed) == "98.0.0")
+finally:
+    # Both put back: the checks further down ask the real eligibility whether
+    # this source tree may be updated, and it must give the real answer.
+    updater._free_space = real_space
+    updater.eligibility = real_eligibility
 
 print("\n== restarting")
 argv = updater.restart_command(installed)

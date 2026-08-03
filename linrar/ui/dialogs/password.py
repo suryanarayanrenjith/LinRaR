@@ -39,6 +39,7 @@ class PasswordDialog(QDialog):
         self.setWindowIcon(icons.icon("key"))
         self.setModal(True)
         self._confirm = confirm
+        self._archive_name = archive_name
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(12, 12, 12, 12)
@@ -83,6 +84,17 @@ class PasswordDialog(QDialog):
                     "or 7z for that."
                 )
 
+        # Offered only when unlocking something: a password being *set* on a
+        # new archive is remembered by the archive dialog itself, and asking
+        # twice in one flow reads as two different questions.
+        self.remember_check = QCheckBox("Remember this password")
+        self.remember_check.setToolTip(
+            "Save it so LinRAR unlocks this archive by itself next time.\n"
+            "Tools > Organize passwords shows where it is kept."
+        )
+        if not confirm:
+            form.addRow("", self.remember_check)
+
         layout.addWidget(group)
 
         buttons = QDialogButtonBox(
@@ -93,6 +105,30 @@ class PasswordDialog(QDialog):
         layout.addWidget(buttons)
 
         self.password_edit.setFocus()
+
+    @property
+    def remember(self) -> bool:
+        return self.remember_check.isChecked() and bool(self.password_edit.text())
+
+    def save_if_asked(self) -> bool:
+        """Store the password when the box was ticked.  True if it was saved."""
+        if not self.remember:
+            return False
+        from ...core.passwords import PASSWORDS, PasswordEntry
+
+        name = self._archive_name.strip()
+        label = name or "Any archive"
+        entries = [e for e in PASSWORDS.load() if e.label != label]
+        entries.append(
+            PasswordEntry(
+                label=label,
+                mask=name or "*",
+                password=self.password_edit.text(),
+                note="Saved from the password prompt",
+            )
+        )
+        PASSWORDS.save(entries)
+        return True
 
     def _toggle_echo(self, shown: bool) -> None:
         mode = QLineEdit.EchoMode.Normal if shown else QLineEdit.EchoMode.Password
@@ -136,5 +172,6 @@ class PasswordDialog(QDialog):
             allow_header_encryption=allow_header_encryption,
         )
         if dialog.exec() == QDialog.DialogCode.Accepted:
+            dialog.save_if_asked()
             return dialog.password, dialog.encrypt_headers
         return None

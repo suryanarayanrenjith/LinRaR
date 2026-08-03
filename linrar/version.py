@@ -36,6 +36,7 @@ start.
 
 from __future__ import annotations
 
+import os
 import re
 from dataclasses import dataclass
 from functools import total_ordering
@@ -52,6 +53,9 @@ __all__ = [
     "tag",
     "full_version",
     "describe",
+    "describe_state",
+    "installed_version",
+    "restart_pending",
     "build_info",
     "is_release_build",
     "channel",
@@ -372,3 +376,54 @@ def describe() -> str:
     if _BUILD.get("date"):
         parts.append(_BUILD["date"][:10])
     return f"{__version__} ({', '.join(parts)})"
+
+
+# ------------------------------------------------------- running vs installed
+#
+# An update replaces this very file underneath a running process.  From that
+# moment there are two versions of LinRAR on the machine and they are not the
+# same number: the one in memory, which goes on running until the program is
+# restarted, and the one on disk, which is what will start next time.
+#
+# Everything that reports a version has to know which of the two it means.
+# ``__version__`` is the running one -- it cannot be anything else, it was read
+# at import.  :func:`installed_version` re-reads the file, so it answers for
+# the copy on disk however many times it has been replaced since.
+
+
+def installed_version() -> str:
+    """The version of the files on disk, which is not always the one running.
+
+    Read out of the file rather than taken from this module, because after an
+    update this module is a copy of what *used* to be there.  Falls back to the
+    running version if the file cannot be read, which keeps every caller's
+    arithmetic sane even on a half-broken install.
+    """
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "version.py")
+    try:
+        with open(path, encoding="utf-8") as handle:
+            for line in handle:
+                if line.startswith("__version__ = "):
+                    found = line.split('"')[1]
+                    return found if try_parse(found) else __version__
+    except (OSError, IndexError):
+        pass
+    return __version__
+
+
+def restart_pending() -> bool:
+    """Has an update replaced the files this process is still running from?"""
+    return installed_version() != __version__
+
+
+def describe_state() -> str:
+    """What to show a user who may be running one version and have another.
+
+    The same as :func:`describe` until an update lands mid-session, and after
+    that it says both — an About box that reports the old number with no
+    explanation reads as an update that did not work.
+    """
+    if not restart_pending():
+        return describe()
+    return (f"{describe()} — {installed_version()} is installed, "
+            "restart to use it")

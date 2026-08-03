@@ -8,7 +8,10 @@
 - [Protecting and repairing](#protecting-and-repairing)
 - [Self-extracting archives](#self-extracting-archives)
 - [Themes and customization](#themes-and-customization)
+- [Finding things](#finding-things)
+- [Checksums](#checksums)
 - [Passwords](#passwords)
+- [Dragging files](#dragging-files)
 - [Right-click menu and command line](#right-click-menu-and-command-line)
 - [Keyboard shortcuts](#keyboard-shortcuts)
 - [Keeping LinRAR up to date](#keeping-linrar-up-to-date)
@@ -253,16 +256,60 @@ in the menu bar's corner, or `Ctrl+Shift+T`.
 
 **Options → Layout → Reset the interface** puts all of it back.
 
+## Finding things
+
+`Ctrl+F` asks for two things, and what you fill in decides what happens.
+
+A **file name mask** on its own filters the list in place — `*.log`, `report*`
+— in the current folder or in the open archive. `F5` clears it.
+
+Add some **text** and LinRAR reads the files themselves: through the current
+folder and everything under it (or the whole of the open archive) and lists
+every line that contains it, grouped by file, with the line numbers.
+**Go to file** takes the window to whichever one you pick. Only files whose
+name passes the mask are read, so `*.py` plus `import` searches your source
+and not your photographs. An archive is unpacked once for the search and the
+scratch folder is removed afterwards.
+
+## Checksums
+
+`Ctrl+K`, or **Tools → Calculate checksums**, works out CRC32, MD5, SHA-1,
+SHA-256 and SHA-512 for whatever is selected — files on disk, or members of an
+open archive, which are unpacked first. All five come from one pass over the
+bytes, so asking for them all costs no more than asking for one.
+
+Paste a published checksum into the box at the bottom (a bare digest, or a
+whole `sha256sum` line) and it names the file that matches and which algorithm
+it was. The result copies or saves either as a table of everything, or in the
+exact `sha256sum` layout so it can be fed to `sha256sum -c`.
+
 ## Passwords
 
 Set one for a single operation from the dialog that needs it, or a default for
-the session with `Ctrl+P`. **Tools → Organize passwords** stores named
-passwords for reuse; they go to your desktop's keyring through `secret-tool`
-when it is installed. Without a keyring they are kept in LinRAR's own file,
-obfuscated but **not encrypted**, and the dialog says exactly that.
+the session with `Ctrl+P`. Tick **Remember this password** on the prompt and
+it is saved for next time.
+
+**Tools → Organize passwords** manages them. Each carries a file-name mask —
+`backup*.rar`, or `*` for any archive — and when an archive asks for a
+password LinRAR tries every saved one whose mask fits, most specific first,
+before it asks you. The status bar says when one was used.
+
+They go to your desktop's keyring through `secret-tool` when it is installed.
+Without a keyring they are kept in LinRAR's own file, obfuscated but **not
+encrypted**, and the dialog says exactly that.
 
 Passwords are handed to `rar`/`unrar` on standard input, never on the command
 line, so they never appear in the process list.
+
+## Dragging files
+
+Files can be dragged out of the list into any file manager, including out of
+an **open archive** — they are unpacked on the way, and a selected folder
+arrives as a folder. Very large selections are refused with a pointer to
+Extract, which has a progress window and a Cancel.
+
+Dragging files *into* LinRAR opens a folder, opens an archive, or starts a new
+one, depending on what you dropped.
 
 ## Right-click menu and command line
 
@@ -317,6 +364,7 @@ opening a window, with status **1**.
 | `Alt+S` | convert archive to SFX (AppImage or .sfx stub) |
 | `Alt+Q` | convert archives |
 | `Alt+G` | generate report |
+| `Ctrl+K` | calculate checksums |
 | `Del` / `F2` / `F7` | delete / rename / new folder |
 | `Ctrl+O` / `Ctrl+W` | open / close archive |
 | `Alt+←` / `Alt+→` | back / forward |
@@ -352,21 +400,33 @@ through seven stages, each ticked off as it passes:
 | Verifying | re-reads the file from disk and checks its SHA-256 against the one the release published |
 | Unpacking | opens the archive, refusing anything that tries to write outside its own folder |
 | Backing up | copies your current version aside, so every step after this is reversible |
-| Installing | replaces the files, refreshes the launcher, desktop entry and icons |
-| Finished | starts the new version in a fresh process and confirms it reports the new version |
+| Installing | writes the new files, **deletes the ones the new release no longer ships**, refreshes the launcher, desktop entry and icons |
+| Finished | starts the new version in a fresh process, confirms it reports the new version, then removes the backup and empties the download cache |
 
 **Show details** opens a log of everything it did, and **Copy log** puts it on
 the clipboard — that is what to attach to a bug report if an update goes wrong.
 
+**Nothing is left behind.** Every release carries a list of the files it
+installs, so an update knows exactly what the version it is replacing put on
+disk. Files the new release no longer ships are deleted, folders it dropped go
+with them, stale compiled bytecode is cleared, and when it is over the backup
+and the download are removed too — the project folder holds the new version and
+nothing else. Files *you* keep in the folder are never touched: they are not on
+any release's list, and the updater only removes what it recognises as its own.
+
 **If anything fails, the update is undone.** The backup goes back, and you are
 left with the version that was working, with the reason on screen. That
-includes the last check: an update that installs perfectly but then will not
-start is rolled back too. The backup is kept in
-`~/.cache/linrar/updates/` afterwards, and can be deleted once the new version
-has proved itself.
+includes the last two checks: an update that installs perfectly but will not
+start, or that leaves a file of the old version behind, is rolled back too.
+There is a free-space check before anything is downloaded, so a full disk stops
+the update rather than interrupting it half way.
 
 LinRAR is not restarted for you. When the update is in, it offers **Restart
-LinRAR**; until you take it, the copy you are using is still the old one.
+LinRAR**; until you take it, the copy you are using is still the old one — and
+LinRAR says so rather than pretending otherwise. While a restart is pending,
+the About box, **Settings → Updates** and the status bar all read something
+like *"2.0.0 — 2.1.0 is installed, restart to use it"*, and checking for
+updates again will not re-offer the release you have just installed.
 
 ### Automatic updates
 

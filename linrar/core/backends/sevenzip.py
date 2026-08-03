@@ -396,17 +396,125 @@ class SevenZipBackend(ArchiveBackend):
                 members.append(os.path.relpath(item, base) if base else item)
             except ValueError:
                 members.append(item)
-        if not options.store_paths:
-            members = [
-                os.path.basename(m.rstrip("/")) for m in members
-            ]
-
-        argv.extend(["--", os.path.abspath(options.archive_path)])
+        archive = os.path.abspath(options.archive_path)
+        argv.extend(["--", archive])
         argv.extend(members)
-        self._run(argv, ctx, allowed=(0, 1), cwd=base or None)
+        runner = self._run(argv, ctx, allowed=(0, 1), cwd=base or None)
+        # 7z reports a file it could not read as a *warning* and still exits 1,
+        # which is an allowed status here; without this the archive would come
+        # out quietly short of the files the user selected.
+        self._reject_missing_sources(runner.output)
+
+        if not options.store_paths:
+            # 7-Zip has no "exclude paths" switch, so the paths are given to it
+            # in full (they are how it finds the files at all) and flattened
+            # afterwards, which for a 7z archive rewrites only the header.
+            # Handing it bare basenames instead — as this used to — made every
+            # file in a subfolder unfindable, and it silently archived the rest.
+            self._flatten_paths(archive, options.password, ctx)
 
         if options.test_after:
             self.test(options.archive_path, options.password, ctx)
+
+    @staticmethod
+    def _reject_missing_sources(output: str) -> None:
+        """Raise when 7z warned that it could not read one of the inputs.
+
+        A file it cannot open is a *scan warning*: 7z prints it, carries on
+        with the rest and exits 1, which is a status ``create`` has to allow
+        for the ordinary "one file was locked" case.  So the words are read as
+        well, and the archive that came out short is reported rather than
+        handed back as a success.  The block looks like::
+
+            Scan WARNINGS for files and folders:
+
+            missing.txt : No more files
+            ----------------
+            Scan WARNINGS: 1
+        """
+        lines = output.splitlines()
+        details: list[str] = []
+        for index, line in enumerate(lines):
+            if not line.strip().lower().startswith("scan warnings for"):
+                continue
+            for follow in lines[index + 1:]:
+                stripped = follow.strip()
+                if stripped.startswith("----") or stripped.lower().startswith(
+                    "scan warnings:"
+                ):
+                    break
+                if stripped:
+                    details.append(stripped)
+            break
+        if not details:
+            details = [
+                line.strip()
+                for line in lines
+                if any(
+                    phrase in line.lower()
+                    for phrase in ("can not open", "cannot find", "no more files")
+                )
+            ]
+        if not details:
+            return
+        raise OperationError(
+            "Some of the selected files could not be read, so the archive "
+            "would be incomplete.\n\n"
+            + "\n".join(dict.fromkeys(details[:6]))
+        )
+
+    def _flatten_paths(
+        self,
+        archive: str,
+        password: Optional[str],
+        ctx: Optional[TaskContext],
+    ) -> None:
+        """Rename every member down to its base name, WinRAR's ``-ep``.
+
+        A base name already claimed by another member is left alone: losing
+        one of two files to a silent overwrite is worse than storing one of
+        them under the path it came from, and the message says which.
+        """
+        ctx = ctx or TaskContext()
+        try:
+            info = self.read_info(archive, password)
+        except OperationError:
+            return
+        taken = {e.name for e in info.entries if "/" not in e.name}
+        pairs: list[tuple[str, str]] = []
+        clashes: list[str] = []
+        for entry in info.entries:
+            if entry.is_dir or "/" not in entry.name:
+                continue
+            base = entry.name.rsplit("/", 1)[-1]
+            if base in taken:
+                clashes.append(entry.name)
+                continue
+            taken.add(base)
+            pairs.append((entry.name, base))
+        if pairs:
+            self.rename_members(archive, pairs, password, ctx)
+        for name in clashes:
+            ctx.on_message(
+                f"{name} kept its folder: another file is already called "
+                f"{name.rsplit('/', 1)[-1]}"
+            )
+
+        # The folders the renamed files came out of are now empty, and an
+        # archive asked not to store paths should not carry them.  Anything
+        # still living inside one (a clash above) keeps its folder.
+        kept = {name.rsplit("/", 1)[0] for name in clashes}
+        empty = [
+            entry.name for entry in info.entries
+            if entry.is_dir
+            and not any(k == entry.name or k.startswith(entry.name + "/")
+                        for k in kept)
+        ]
+        if empty:
+            # Deepest first, so a parent is only removed once it is truly bare.
+            self.delete_members(
+                archive, sorted(empty, key=lambda n: -n.count("/")), password, ctx
+            )
 
     def rename_member(
         self,

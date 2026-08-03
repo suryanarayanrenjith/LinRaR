@@ -13,7 +13,17 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Optional
 
-from PyQt6.QtCore import QAbstractTableModel, QModelIndex, QSize, Qt, pyqtSignal
+from typing import Callable
+
+from PyQt6.QtCore import (
+    QAbstractTableModel,
+    QMimeData,
+    QModelIndex,
+    QSize,
+    Qt,
+    QUrl,
+    pyqtSignal,
+)
 from PyQt6.QtGui import QColor, QFont
 from PyQt6.QtWidgets import (
     QAbstractItemView,
@@ -60,6 +70,18 @@ _VIEW_GEOMETRY = {
 
 #: row heights offered by the Customize dialog, in extra pixels per row
 ROW_SPACING = {"compact": 0, "normal": 4, "relaxed": 10}
+
+#: The widths a fresh installation starts with, and what "Reset the interface"
+#: puts back.  QHeaderView.reset() is the model-reset slot and does nothing to
+#: section sizes, so resetting has to be spelled out.
+DEFAULT_COLUMN_WIDTHS: tuple[tuple[int, int], ...] = (
+    (COL_NAME, 230),
+    (COL_SIZE, 85),
+    (COL_PACKED, 85),
+    (COL_TYPE, 120),
+    (COL_MODIFIED, 120),
+    (COL_CRC, 80),
+)
 
 # The Type column names an archive after the program that opens it, the way
 # WinRAR's listing does -- "LinRAR archive" rather than "RAR archive" -- so
@@ -144,6 +166,10 @@ class FileListModel(QAbstractTableModel):
         self.archive_mode = False
         self._sort_column = COL_NAME
         self._sort_order = Qt.SortOrder.AscendingOrder
+        #: Turns the rows being dragged into real paths on disk.  The main
+        #: window installs one that unpacks archive members to a scratch
+        #: folder; without it, only disk rows can be dragged out.
+        self.drag_paths: Optional[Callable[[list[ListingItem]], list[str]]] = None
 
     # -- population --------------------------------------------------------
 
@@ -255,6 +281,60 @@ class FileListModel(QAbstractTableModel):
             parts.append(f"Link to: {item.entry.link_target}")
         return "\n".join(parts)
 
+    # -- dragging out ------------------------------------------------------
+    #
+    # The views have always had dragging switched on, but a table model with
+    # no mime data of its own hands the desktop Qt's private
+    # "x-qabstractitemmodeldatalist", which nothing outside the application
+    # understands: dropping into a file manager did precisely nothing.  These
+    # three methods make a drag out of LinRAR carry real file URLs.
+
+    def flags(self, index: QModelIndex):
+        base = super().flags(index)
+        if not index.isValid():
+            return base
+        item = self._items[index.row()]
+        if item.is_parent:
+            return base
+        return base | Qt.ItemFlag.ItemIsDragEnabled
+
+    def mimeTypes(self) -> list[str]:
+        return ["text/uri-list"]
+
+    def supportedDragActions(self):
+        return Qt.DropAction.CopyAction
+
+    def mimeData(self, indexes):
+        rows = sorted({index.row() for index in indexes if index.isValid()})
+        items = [
+            self._items[row] for row in rows
+            if 0 <= row < len(self._items) and not self._items[row].is_parent
+        ]
+        if not items:
+            return None
+        if self.archive_mode:
+            if self.drag_paths is None:
+                return None
+            paths = self.drag_paths(items)
+        else:
+            paths = [item.path for item in items]
+        paths = [p for p in paths if p]
+        if not paths:
+            return None
+        data = QMimeData()
+        data.setUrls([QUrl.fromLocalFile(path) for path in paths])
+        # Both GNOME and KDE read the intended action from this, and without
+        # it a drop into Nautilus is offered as a move out of a folder LinRAR
+        # may not own.
+        data.setData(
+            "x-special/gnome-copied-files",
+            b"copy\n"
+            + "\n".join(
+                QUrl.fromLocalFile(path).toString() for path in paths
+            ).encode("utf-8"),
+        )
+        return data
+
     # -- sorting -----------------------------------------------------------
 
     def sort(self, column: int, order=Qt.SortOrder.AscendingOrder) -> None:
@@ -312,10 +392,7 @@ class FileListView(QTreeView):
         self.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.setIconSize(_icon_size())
-        self.setDragDropMode(QAbstractItemView.DragDropMode.DragDrop)
-        self.setDefaultDropAction(Qt.DropAction.CopyAction)
-        self.setAcceptDrops(True)
-        self.setDropIndicatorShown(True)
+        _configure_drag(self)
         self._columns_ready = False
 
         header = self.header()
@@ -349,17 +426,22 @@ class FileListView(QTreeView):
         for column in range(len(HEADERS)):
             header.setSectionResizeMode(column, QHeaderView.ResizeMode.Interactive)
         # Apply sensible defaults once; after that the user's own widths win.
+        # A restored header state counts as "once already done", or the widths
+        # saved on the way out would be overwritten on the way back in — which
+        # is exactly what used to happen, because the first listing is built
+        # after the state is restored.
         if not self._columns_ready:
-            self._columns_ready = True
-            for column, width in (
-                (COL_NAME, 230),
-                (COL_SIZE, 85),
-                (COL_PACKED, 85),
-                (COL_TYPE, 120),
-                (COL_MODIFIED, 120),
-                (COL_CRC, 80),
-            ):
-                self.setColumnWidth(column, width)
+            self.apply_default_widths()
+
+    def apply_default_widths(self) -> None:
+        """Put every column back to the width LinRAR ships with."""
+        self._columns_ready = True
+        for column, width in DEFAULT_COLUMN_WIDTHS:
+            self.setColumnWidth(column, width)
+
+    def mark_columns_restored(self) -> None:
+        """Note that the widths came from the user's saved header state."""
+        self._columns_ready = True
 
     def selected_items(self) -> list[ListingItem]:
         return _selection(self)
@@ -379,10 +461,7 @@ class IconListView(QListView):
         self.setMovement(QListView.Movement.Static)
         self.setUniformItemSizes(True)
         self.setWordWrap(True)
-        self.setDragDropMode(QAbstractItemView.DragDropMode.DragDrop)
-        self.setDefaultDropAction(Qt.DropAction.CopyAction)
-        self.setAcceptDrops(True)
-        self.setDropIndicatorShown(True)
+        _configure_drag(self)
         self.setSpacing(2)
         self.doubleClicked.connect(self._on_double_click)
 
@@ -527,7 +606,22 @@ class FileBrowser(QWidget):
     def restore_header_state(self, state) -> bool:
         if not state:
             return False
-        return self.details.header().restoreState(state)
+        restored = self.details.header().restoreState(state)
+        if restored:
+            self.details.mark_columns_restored()
+        return restored
+
+    def reset_columns(self) -> None:
+        """Forget the saved widths and order, back to how LinRAR ships."""
+        header = self.details.header()
+        # Put every column back where it started: moveSection works in visual
+        # positions, so each logical column is dragged to its own index.
+        for logical in range(header.count()):
+            visual = header.visualIndex(logical)
+            if visual != logical:
+                header.moveSection(visual, logical)
+        header.setSortIndicator(COL_NAME, Qt.SortOrder.AscendingOrder)
+        self.details.apply_default_widths()
 
 
 class _RowDelegate(QStyledItemDelegate):
@@ -541,6 +635,22 @@ class _RowDelegate(QStyledItemDelegate):
         size = super().sizeHint(option, index)
         size.setHeight(size.height() + self._spacing)
         return size
+
+
+def _configure_drag(view: QAbstractItemView) -> None:
+    """Drag out, never drop in.
+
+    Dropping is the *window's* job: it decides between browsing a folder,
+    opening an archive and adding files to one, and it can do that wherever
+    the pointer lands.  A view that accepted drops itself would swallow them
+    (the model has nothing to do with a dropped file) and the window would
+    never see them, which is what used to happen over the file list.
+    """
+    view.setDragEnabled(True)
+    view.setDragDropMode(QAbstractItemView.DragDropMode.DragOnly)
+    view.setDefaultDropAction(Qt.DropAction.CopyAction)
+    view.setAcceptDrops(False)
+    view.setDropIndicatorShown(False)
 
 
 def _selection(view: QAbstractItemView) -> list[ListingItem]:

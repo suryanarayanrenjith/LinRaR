@@ -261,7 +261,7 @@ class UpdateDialog(QDialog):
         font.setPointSizeF(font.pointSizeF() + 1.5)
         self.title_label.setFont(font)
         self.subtitle_label = QLabel(
-            f"This copy is LinRAR {versions.describe()}"
+            f"This copy is LinRAR {versions.describe_state()}"
         )
         self.subtitle_label.setObjectName("Hint")
         self.subtitle_label.setWordWrap(True)
@@ -429,7 +429,7 @@ class UpdateDialog(QDialog):
         """Ask the server what the newest release is."""
         self._show_page(self.page_check)
         self._headline("Checking for updates...",
-                       f"This copy is LinRAR {versions.describe()}", "refresh")
+                       f"This copy is LinRAR {versions.describe_state()}", "refresh")
         self._set_buttons(cancel=True)
         self._log_line(f"Checking for updates ({time.strftime('%H:%M:%S')})")
 
@@ -451,7 +451,9 @@ class UpdateDialog(QDialog):
         if found is None:
             self._headline(
                 "LinRAR is up to date",
-                f"Version {versions.describe()} is the newest release.",
+                f"Version {versions.installed_version()} is the newest release."
+                + (" It will be running once LinRAR is restarted."
+                   if versions.restart_pending() else ""),
                 "package", "Success",
             )
             self._show_page(self.page_result)
@@ -469,7 +471,7 @@ class UpdateDialog(QDialog):
         """Show what is available, and whether it can be installed here."""
         self._headline(
             f"LinRAR {found.version} is available",
-            f"You are running {versions.describe()}.",
+            f"You are running {versions.describe_state()}.",
             "package-alert",
         )
         self.fact_version.setText(found.version)
@@ -602,13 +604,15 @@ class UpdateDialog(QDialog):
                        "Success")
         self.done_label.setText(
             f"<b>LinRAR {version} has been installed.</b><br>"
-            "The copy that is running is still the old one until it is "
-            "restarted."
+            f"Everything on disk now says {versions.installed_version()}; the "
+            f"copy still running is {versions.__version__}, and will be until "
+            "it is restarted."
         )
         self.done_hint.setText(
-            f"The previous version was kept at {backup}\n"
-            "It can be deleted once the new one has proved itself."
-            if backup else ""
+            f"The previous version was kept at {backup}"
+            if backup else
+            "The old version's files were removed and the download cache "
+            "cleared — nothing was left behind."
         )
         self._show_page(self.page_done)
         self._set_buttons(restart=True, close=True)
@@ -791,6 +795,11 @@ class StartupCheck:
     def schedule(self) -> None:
         """Arrange the check for shortly after the window has settled."""
         if not self.wanted() or not updater.eligibility():
+            return
+        # An update applied earlier in this session is already on disk; asking
+        # the server again before the restart would only offer what is already
+        # installed.
+        if versions.restart_pending():
             return
         if not due_for_check():
             return

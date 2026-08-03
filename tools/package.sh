@@ -140,6 +140,21 @@ BUILD = {
 EOF
 ok "linrar/_build.py  ${COMMIT}"
 
+# The release's own inventory: every file it installs, relative to the project
+# folder.  The updater reads the *installed* copy of this to know exactly which
+# files the version it is replacing put on disk, and so which of them to delete
+# -- without it there is no way to tell a file left over from the last release
+# from one the user keeps in the folder themselves.  It lists itself, because
+# it is one of the files a release installs.
+INVENTORY="${STAGING}/linrar/_files.txt"
+{
+    printf '# Files installed by LinRAR %s.  Written by tools/package.sh.\n' \
+        "$VERSION"
+    printf '# The updater uses this to remove what a new release no longer ships.\n'
+} > "$INVENTORY"
+( cd "$STAGING" && find . -type f -printf '%P\n' | LC_ALL=C sort ) >> "$INVENTORY"
+ok "linrar/_files.txt  $(( $(wc -l < "$INVENTORY") - 2 )) files"
+
 # -------------------------------------------------------------- 3. tarball
 
 step "Building ${NAME}.tar.gz"

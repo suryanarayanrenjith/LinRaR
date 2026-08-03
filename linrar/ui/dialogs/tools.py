@@ -452,7 +452,11 @@ class PropertiesDialog(QDialog):
 
         header = QHBoxLayout()
         icon_label = QLabel()
-        icon_label.setPixmap(icons.pixmap("file" if entry and not entry.is_dir else "folder", 48))
+        # Whatever the file list drew for this row, so the two agree.  Asking
+        # only "is it an archive member?" used to give every plain disk file a
+        # folder icon, because a disk row carries no ArchiveEntry.
+        is_dir = entry.is_dir if entry is not None else os.path.isdir(path)
+        icon_label.setPixmap(icons.pixmap(_item_icon(name, is_dir), 48))
         header.addWidget(icon_label, 0, Qt.AlignmentFlag.AlignTop)
         title = QLabel(f"<b>{name}</b>")
         title.setWordWrap(True)
@@ -607,6 +611,13 @@ class ReportDialog(QDialog):
             QMessageBox.warning(self, "LinRAR", f"Cannot save the report.\n\n{exc}")
             return
         QMessageBox.information(self, "LinRAR", f"Report saved to:\n{path}")
+
+
+def _item_icon(name: str, is_dir: bool) -> str:
+    """The icon the file list would draw for this name."""
+    from ..filelist import ListingItem
+
+    return ListingItem(name=name, path="", is_dir=is_dir).icon_name
 
 
 def _selectable(text: str) -> QLabel:
