@@ -207,28 +207,13 @@ class PasswordManagerDialog(QDialog):
         layout.setContentsMargins(12, 12, 12, 12)
         layout.setSpacing(8)
 
-        storage = QLabel(
-            f"<b>Storage:</b> {PASSWORDS.backend_name}"
-        )
-        layout.addWidget(storage)
+        self.storage_label = QLabel(f"<b>Storage:</b> {PASSWORDS.backend_name}")
+        layout.addWidget(self.storage_label)
 
-        if PASSWORDS.secure:
-            note = QLabel(
-                "Passwords are held in your desktop's keyring and are "
-                "protected by your login."
-            )
-            note.setObjectName("Success")
-        else:
-            note = QLabel(
-                "No system keyring was found, so passwords are stored in "
-                "LinRAR's own settings file. They are obfuscated but "
-                "<b>not encrypted</b>: anyone who can read your home folder "
-                "can recover them. Install 'libsecret-tools' (secret-tool) for "
-                "proper keyring storage."
-            )
-            note.setObjectName("Warning")
-        note.setWordWrap(True)
-        layout.addWidget(note)
+        self.storage_note = QLabel()
+        self.storage_note.setWordWrap(True)
+        self._describe_storage()
+        layout.addWidget(self.storage_note)
 
         self.table = QTreeWidget()
         self.table.setColumnCount(4)
@@ -268,7 +253,43 @@ class PasswordManagerDialog(QDialog):
         self._entries: list[PasswordEntry] = PASSWORDS.load()
         self._reload()
 
+    def _describe_storage(self) -> None:
+        """Say where the passwords really are, including after a demotion.
+
+        The store falls back to LinRAR's own file when the keyring turns out
+        not to work — a machine with ``secret-tool`` installed and no service
+        behind it is common enough (headless boxes, minimal desktops,
+        containers) and used to swallow every password saved.  Falling back
+        silently would only trade one lie for another.
+        """
+        self.storage_label.setText(f"<b>Storage:</b> {PASSWORDS.backend_name}")
+        if PASSWORDS.failure:
+            self.storage_note.setText(
+                PASSWORDS.failure
+                + " They are obfuscated but <b>not encrypted</b>: anyone who "
+                "can read your home folder can recover them."
+            )
+            self.storage_note.setObjectName("Warning")
+        elif PASSWORDS.secure:
+            self.storage_note.setText(
+                "Passwords are held in your desktop's keyring and are "
+                "protected by your login."
+            )
+            self.storage_note.setObjectName("Success")
+        else:
+            self.storage_note.setText(
+                "No system keyring answered, so passwords are stored in "
+                "LinRAR's own settings file. They are obfuscated but "
+                "<b>not encrypted</b>: anyone who can read your home folder "
+                "can recover them. Install 'libsecret-tools' (secret-tool) and "
+                "a keyring daemon for proper storage."
+            )
+            self.storage_note.setObjectName("Warning")
+        self.storage_note.style().unpolish(self.storage_note)
+        self.storage_note.style().polish(self.storage_note)
+
     def _reload(self) -> None:
+        self._describe_storage()
         self.table.clear()
         for entry in self._entries:
             shown = entry.password if self.show_check.isChecked() else "•" * 8

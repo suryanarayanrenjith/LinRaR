@@ -36,6 +36,33 @@ All notable changes to LinRAR, newest first.
 - The result copies or saves either as a table of everything, or in the exact
   `sha256sum` layout, so it can be fed straight to `sha256sum -c`.
 
+### A keyring that is not there no longer swallows passwords
+
+- **Fixed: every password saved could vanish silently.** `secret-tool` being
+  installed does not mean anything is listening — a headless server, a minimal
+  desktop, a container and a CI runner all routinely have the command and no
+  service behind it. It then fails with *"Could not connect"* on stderr while
+  still exiting 1, which is also the perfectly ordinary "nothing stored yet".
+  LinRAR's check looked for the word *"cannot"*, which that message does not
+  contain, so it believed in a keyring that was not there: every password
+  written went nowhere and came back empty. The probe is now a `secret-tool
+  lookup`, which is silent when it works, and any complaint on stderr counts
+  as a refusal.
+- **A password the keyring will not take is kept anyway**, in LinRAR's own
+  file, and the store stops claiming to use a keyring. Writes are verified by
+  reading them back, because a write that reports success and holds nothing is
+  a password that has been lost. *Organize passwords* says which storage is
+  really in use, and why it changed.
+- **The test runner can no longer hang.** Each file now runs under a timeout
+  (`LINRAR_TEST_TIMEOUT`, 300s by default) and a file that overruns is killed
+  and reported as `TIMED OUT` with everything it managed to print, so the
+  check before the hang names itself. This is how the above was found: on
+  GitHub's runner the missing keyring left LinRAR with no saved password, the
+  archive raised a *modal* prompt, and offscreen it waited for an answer that
+  could never come — the job simply stopped after `test_navigation.py` with
+  nothing to say. GUI tests now count password prompts instead of showing
+  them, so "LinRAR had to ask" is a failed check with a name.
+
 ### Saved passwords are finally used
 
 - **Fixed: *Tools → Organize passwords* stored passwords nobody ever read.**

@@ -47,6 +47,14 @@ ORDER = [
     "test_final.py",
 ]
 
+#: Seconds any one file may take before it is killed and reported as a
+#: failure.  Nothing here takes more than about five, so this only ever fires
+#: on a genuine hang — and a hang is what a GUI test does when it opens a
+#: modal dialog that, offscreen, nobody can ever answer.  Without this the
+#: whole run simply stops, which on CI means a job that sits there until the
+#: runner's own limit kills it with no idea which file was to blame.
+TIMEOUT = int(os.environ.get("LINRAR_TEST_TIMEOUT") or 300)
+
 #: Files that cannot run without a particular tool.  `rar` is shareware and is
 #: missing on plenty of machines (and on CI runners), so those files are
 #: skipped with a note rather than reported as failures.
@@ -68,6 +76,13 @@ BOLD, GREEN, RED, DIM, OFF = (
 def interpreter() -> str:
     venv = os.path.join(ROOT, ".venv", "bin", "python")
     return venv if os.path.exists(venv) else sys.executable
+
+
+def _text(raw) -> str:
+    """TimeoutExpired hands back whatever type the pipe was opened with."""
+    if raw is None:
+        return ""
+    return raw if isinstance(raw, str) else raw.decode("utf-8", "replace")
 
 
 def available(tool: str) -> bool:
@@ -124,10 +139,27 @@ def main(argv: list[str]) -> int:
             print(f"{DIM}skipped  needs {', '.join(missing)}{OFF}")
             continue
         began = time.monotonic()
-        result = subprocess.run(
-            [python, os.path.join(HERE, name)],
-            capture_output=True, text=True, cwd=ROOT,
-        )
+        timed_out = False
+        try:
+            result = subprocess.run(
+                [python, os.path.join(HERE, name)],
+                capture_output=True, text=True, cwd=ROOT, timeout=TIMEOUT,
+            )
+        except subprocess.TimeoutExpired as expired:
+            # The child is already killed by the time this is raised; what it
+            # managed to print is on the exception, and it is the only clue to
+            # where it stopped, so it is kept and shown like any other failure.
+            timed_out = True
+            result = subprocess.CompletedProcess(
+                expired.cmd,
+                returncode=124,
+                stdout=_text(expired.stdout),
+                stderr=_text(expired.stderr)
+                + f"\n[timed out after {TIMEOUT}s — killed]\n"
+                + "The last check printed above is the one before the hang. "
+                "A GUI test that opens a modal dialog offscreen waits for an "
+                "answer that can never come.",
+            )
         seconds = time.monotonic() - began
         summary = ""
         for line in reversed(result.stdout.splitlines()):
@@ -142,7 +174,8 @@ def main(argv: list[str]) -> int:
             print(f"{GREEN}ok{OFF}    {summary or 'no summary'}  {DIM}{seconds:.1f}s{OFF}")
         else:
             broken.append(name)
-            print(f"{RED}FAIL{OFF}  {summary or 'crashed'}  {DIM}{seconds:.1f}s{OFF}")
+            state = "TIMED OUT" if timed_out else (summary or "crashed")
+            print(f"{RED}FAIL{OFF}  {state}  {DIM}{seconds:.1f}s{OFF}")
             output = (result.stdout + result.stderr).strip()
             # The failed checks first — a tail alone hides them when the file
             # keeps going, which is exactly when you need to see them.

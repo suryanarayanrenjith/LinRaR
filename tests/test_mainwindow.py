@@ -13,10 +13,22 @@ from PyQt6.QtWidgets import QApplication
 app = QApplication([])
 
 from linrar.ui.main_window import MainWindow, _StoredPasswords
+from linrar.ui.dialogs import password as password_dialog
 from linrar.core.backends.rar import RarBackend
 from linrar.core.models import CompressOptions, ExtractOptions, OverwriteMode
 from linrar.core.passwords import PASSWORDS, PasswordEntry
 from linrar.core.settings import SETTINGS
+
+# Nothing in this file may ever put a modal password prompt on screen: offscreen
+# it waits for an answer that can never come, and the whole run stops there.
+# Every ask is counted instead, so "LinRAR had to ask" is a failed check with a
+# name rather than a hung CI job.  (This is exactly how the saved-password
+# checks below wedged a GitHub runner: the machine had secret-tool installed
+# with no service behind it, so every saved password came back empty.)
+ASKED = []
+password_dialog.PasswordDialog.ask = staticmethod(
+    lambda *args, **kwargs: ASKED.append(args[1:2]) or None
+)
 
 PASS = FAIL = 0
 def check(name, cond, extra=""):
@@ -104,6 +116,9 @@ rar.create([f"{src}/one.txt"], CompressOptions(
     password="Sekret1", encrypt_headers=True))
 PASSWORDS.save([PasswordEntry(label="suite", mask="locked*.rar",
                               password="Sekret1")])
+check("a saved password can be read back, whatever it was stored in",
+      PASSWORDS.load() and PASSWORDS.load()[0].password == "Sekret1",
+      f"backend={PASSWORDS.backend_name} failure={PASSWORDS.failure!r}")
 check("the store offers a password whose mask fits",
       PASSWORDS.candidates_for("locked.rar") == ["Sekret1"],
       PASSWORDS.candidates_for("locked.rar"))
@@ -112,9 +127,11 @@ check("and none whose mask does not",
       PASSWORDS.candidates_for("something-else.rar"))
 
 w.password = None
+ASKED.clear()
 result = w.read_archive(locked)
 check("a header-encrypted archive opens without asking",
-      result is not None, "read_archive returned None (it would have prompted)")
+      result is not None and not ASKED,
+      f"asked {len(ASKED)} time(s); backend={PASSWORDS.backend_name}")
 if result is not None:
     _backend, info, used, _path = result
     check("with the saved password", used == "Sekret1", used)
@@ -136,28 +153,27 @@ check("nothing is offered for an archive with no saved password",
 sealed_src = os.path.join(root, "sealed-src")
 os.makedirs(sealed_src)
 open(f"{sealed_src}/payload.txt", "w").write("top secret")
-sealed = f"{root}/sealed.rar"
+# The archive lives alone in its own folder: "extract here" unpacks beside it,
+# and a file already sitting there would raise the *conflict* dialog, which is
+# every bit as modal — and as unanswerable offscreen — as the password one.
+sealed_dir = os.path.join(root, "sealed-dir")
+os.makedirs(sealed_dir)
+sealed = f"{sealed_dir}/sealed.rar"
 rar.create([f"{sealed_src}/payload.txt"], CompressOptions(
     archive_path=sealed, base_folder=sealed_src, password="Sekret1"))
 PASSWORDS.save([PasswordEntry(label="suite", mask="sealed*.rar",
                               password="Sekret1")])
-from linrar.ui.dialogs import password as password_dialog
-_asked = []
-_real_ask = password_dialog.PasswordDialog.ask
-password_dialog.PasswordDialog.ask = staticmethod(
-    lambda *a, **k: _asked.append(a) or None
-)
 w.close_archive()
 w.password = None
 w.navigate_to(root)
+ASKED.clear()
 extracted = w.extract_archive(sealed, ask_options=False)
-password_dialog.PasswordDialog.ask = _real_ask
 check("extracting an archive that was never opened uses the saved password",
-      extracted and not _asked, (extracted, len(_asked)))
-check("and the files really arrive", os.path.isfile(f"{root}/payload.txt"))
+      extracted and not ASKED, (extracted, len(ASKED)))
+check("and the files really arrive", os.path.isfile(f"{sealed_dir}/payload.txt"))
 check("with the right contents",
-      os.path.isfile(f"{root}/payload.txt")
-      and open(f"{root}/payload.txt").read() == "top secret")
+      os.path.isfile(f"{sealed_dir}/payload.txt")
+      and open(f"{sealed_dir}/payload.txt").read() == "top secret")
 PASSWORDS.save([])
 
 # -- recently opened archives -------------------------------------------

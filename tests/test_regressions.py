@@ -218,6 +218,66 @@ body = source.split("def toggle_hidden", 1)[1].split("\n    def ", 1)[0]
 check("toggling hidden files does not re-read the open archive",
       "self.refresh()" not in body, body.strip()[:160])
 
+print("== a keyring that is not there must not swallow passwords")
+# secret-tool installed with no service behind it (a headless box, a minimal
+# desktop, a container, a CI runner) reports "Could not connect" on stderr and
+# still exits 1 -- which is also the ordinary "nothing stored yet".  The check
+# used to look for the word "cannot", which that message does not contain, so
+# LinRAR believed in a keyring that was not there: every password saved went
+# nowhere and came back empty, and the archive it should have opened put a
+# modal prompt on screen instead.  Offscreen, that hangs forever.
+from linrar.core import passwords as passwords_module
+
+store = passwords_module.PasswordStore()
+store.save([passwords_module.PasswordEntry(
+    label="probe", mask="probe*.rar", password="Sekret1")])
+check("a saved password reads back whatever it was stored in",
+      [e.password for e in store.load()] == ["Sekret1"],
+      f"backend={store.backend_name} failure={store.failure!r}")
+check("and is offered for an archive its mask fits",
+      store.candidates_for("probe1.rar") == ["Sekret1"],
+      store.candidates_for("probe1.rar"))
+check("but not for one it does not",
+      store.candidates_for("other.rar") == [], store.candidates_for("other.rar"))
+
+# A keyring that accepts a write and then holds nothing is the failure that
+# actually happened.  Forced here, because it cannot be arranged for real.
+broken = passwords_module.PasswordStore()
+broken._use_keyring = True
+broken._keyring_set = lambda label, password: False
+broken._keyring_get = lambda label: None
+broken._keyring_delete = lambda label: None
+broken.save([passwords_module.PasswordEntry(
+    label="probe", mask="*", password="Fallback9")])
+check("a keyring that refuses the write demotes the store",
+      not broken.secure, broken.backend_name)
+check("rather than losing the password",
+      [e.password for e in broken.load()] == ["Fallback9"],
+      [e.password for e in broken.load()])
+check("and says so, instead of quietly changing its mind",
+      "kept in LinRAR's own file" in broken.failure, broken.failure)
+
+recovered = passwords_module.PasswordStore()
+recovered._use_keyring = True
+recovered._keyring_get = lambda label: None
+check("a keyring with nothing in it falls back to the local copy",
+      [e.password for e in recovered.load()] == ["Fallback9"],
+      [e.password for e in recovered.load()])
+
+check("the service probe is a name no dialog can produce",
+      passwords_module._PROBE.strip() != passwords_module._PROBE,
+      passwords_module._PROBE)
+check("and it has no NUL byte, which argv cannot carry",
+      "\x00" not in passwords_module._PROBE)
+
+print("== the runner cannot be hung by one file")
+runner = open(os.path.join(ROOT, "tests/run_all.py")).read()
+check("every test file runs under a timeout", "timeout=TIMEOUT" in runner)
+check("a hang is reported rather than waited on", "TimeoutExpired" in runner)
+check("and named, so the file to blame is obvious", "TIMED OUT" in runner)
+check("the limit can be lowered from the environment",
+      "LINRAR_TEST_TIMEOUT" in runner)
+
 print("== paths shown in a menu stay short")
 long_path = os.path.expanduser("~/") + "/".join(["a-fairly-long-folder"] * 5) \
     + "/archive.rar"

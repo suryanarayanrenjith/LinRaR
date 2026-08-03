@@ -21,6 +21,12 @@ from .settings import SETTINGS
 
 _SCHEMA = "org.linrar.ArchivePassword"
 
+#: An entry name nothing is ever stored under, used only to ask the secret
+#: service whether it is there at all.  The dialog requires a label, and a
+#: leading space is not one anybody can type, so this can never collide with a
+#: real entry.
+_PROBE = " linrar service probe "
+
 
 @dataclass
 class PasswordEntry:
@@ -40,22 +46,41 @@ class PasswordEntry:
 
 
 def keyring_available() -> bool:
-    """True when secret-tool is installed and a secret service answers."""
+    """True when secret-tool is installed **and** a secret service answers.
+
+    Installing ``libsecret-tools`` does not mean anything is listening: a
+    headless server, a minimal window manager, a container or a CI runner all
+    routinely have the command and no daemon behind it.  ``secret-tool`` then
+    fails on stderr — "Could not connect: No such file or directory" — while
+    still exiting 1, which is also the perfectly ordinary "nothing stored yet".
+
+    So the status is not enough on its own.  This used to look for the word
+    "cannot" in stderr, which that message does not contain, so LinRAR
+    believed in a keyring that was not there: every password saved went
+    nowhere and came back empty.
+
+    ``lookup`` is the probe rather than ``search`` because it is silent when
+    it works: ``search`` prints the matching attributes *to stderr*, so
+    "stderr means trouble" would be wrong for the very case it is meant to
+    accept.  Looking up a name nothing will ever be stored under exits 1 with
+    nothing on stderr when a service answered, and exits 1 with the connection
+    error when none did.
+    """
     if not shutil.which("secret-tool"):
         return False
     try:
         proc = subprocess.run(
-            ["secret-tool", "search", "--all", "schema", _SCHEMA],
+            ["secret-tool", "lookup", "schema", _SCHEMA, "entry", _PROBE],
             capture_output=True,
             timeout=5,
         )
     except (OSError, subprocess.TimeoutExpired):
         return False
-    # Exit 1 simply means "nothing stored yet", which still proves the
-    # service is reachable; a missing daemon reports an error on stderr.
+    # Exit 1 simply means "nothing stored under that name", which still proves
+    # the service is reachable; a missing daemon complains on stderr.
     if proc.returncode not in (0, 1):
         return False
-    return b"cannot" not in proc.stderr.lower()
+    return not proc.stderr.strip()
 
 
 class PasswordStore:
@@ -65,6 +90,9 @@ class PasswordStore:
 
     def __init__(self) -> None:
         self._use_keyring = keyring_available()
+        #: Set when the keyring turned out not to work after all, so the UI
+        #: can say what happened rather than quietly changing its mind.
+        self.failure = ""
 
     @property
     def backend_name(self) -> str:
@@ -101,27 +129,56 @@ class PasswordStore:
             )
             if self._use_keyring:
                 entry.password = self._keyring_get(entry.label) or ""
-            else:
+            # A record that carries its own secret wins whenever the keyring
+            # had nothing to say.  That covers both the ordinary local store
+            # and the entries written before a keyring appeared on the
+            # machine, which would otherwise come back blank.
+            if not entry.password:
                 entry.password = _deobfuscate(item.get("secret", ""))
             entries.append(entry)
         return entries
 
     def save(self, entries: list[PasswordEntry]) -> None:
+        """Store *entries*, keeping them somewhere even if the keyring refuses.
+
+        A password that cannot be written to the keyring is written to
+        LinRAR's own file instead, and the store stops claiming to be using a
+        keyring.  Losing what the user typed — which is what silently
+        swallowing the failure amounted to — is far worse than falling back to
+        the weaker storage and saying so.
+        """
         existing = {item.get("label") for item in self._load_meta()}
         kept = {entry.label for entry in entries}
         if self._use_keyring:
             for label in existing - kept:
                 self._keyring_delete(label)
 
+        refused = False
+        if self._use_keyring:
+            for entry in entries:
+                if not self._keyring_set(entry.label, entry.password):
+                    refused = True
+                    break
+        if refused:
+            self._use_keyring = False
+            self.failure = (
+                "The system keyring would not accept the passwords, so they "
+                "were kept in LinRAR's own file instead."
+            )
+
         items = []
         for entry in entries:
             record = {"label": entry.label, "mask": entry.mask, "note": entry.note}
-            if self._use_keyring:
-                self._keyring_set(entry.label, entry.password)
-            else:
+            if not self._use_keyring:
                 record["secret"] = _obfuscate(entry.password)
             items.append(record)
         self._save_meta(items)
+
+    def recheck(self) -> bool:
+        """Ask again whether a keyring is usable, after the desktop changes."""
+        self._use_keyring = keyring_available()
+        self.failure = ""
+        return self._use_keyring
 
     def candidates_for(self, filename: str) -> list[str]:
         """Passwords whose mask matches *filename*, best match first."""
@@ -138,11 +195,12 @@ class PasswordStore:
 
     # -- keyring helpers ---------------------------------------------------
 
-    def _keyring_set(self, label: str, password: str) -> None:
+    def _keyring_set(self, label: str, password: str) -> bool:
+        """Write one secret.  ``False`` means the keyring would not take it."""
         if not password:
-            return
+            return True
         try:
-            subprocess.run(
+            proc = subprocess.run(
                 [
                     "secret-tool", "store", "--label", f"LinRAR: {label}",
                     "schema", _SCHEMA, "entry", label,
@@ -152,7 +210,14 @@ class PasswordStore:
                 timeout=10,
             )
         except (OSError, subprocess.TimeoutExpired):
-            pass
+            return False
+        if proc.returncode != 0 or proc.stderr.strip():
+            return False
+        # Trust nothing: prove it can be read back before reporting success.
+        # `secret-tool store` has been known to exit 0 against a service that
+        # then holds nothing, and a password that cannot be read back is a
+        # password that has been lost.
+        return self._keyring_get(label) == password
 
     def _keyring_get(self, label: str) -> Optional[str]:
         try:
