@@ -73,7 +73,7 @@ __all__ = [
 #: ``tools/release.py bump {patch|minor|major|X.Y.Z}`` rather than by hand: the
 #: same command moves the CHANGELOG's "Unreleased" section under the new
 #: number, which is what the release notes are cut from.
-__version__ = "2.0.0"
+__version__ = "2.1.0"
 
 #: The oldest Python this release runs on.  ``install.sh`` refuses anything
 #: older, the update manifest advertises it, and a test keeps the two honest —

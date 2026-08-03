@@ -4,6 +4,8 @@ All notable changes to LinRAR, newest first.
 
 ## Unreleased
 
+## 2.1.0 — 2026-08-03
+
 ### Find reads the files, not just their names
 
 - **The "Text to find" box does something.** It has been on the Find dialog

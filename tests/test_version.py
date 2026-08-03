@@ -175,8 +175,15 @@ check("--json carries the channel",
       json.loads(release("current", "--json", cwd=sandbox).stdout)["channel"]
       == "stable")
 
+# Worked out from whatever this tree's version happens to be, never written
+# down: releasing LinRAR must not mean editing its tests, and a hard-coded
+# "2.0.1" here would fail the day the version moved -- which is the one day
+# these checks most need to be passing.
+NEXT_PATCH = str(V.VERSION.bump("patch"))
+NEXT_MINOR = str(V.VERSION.bump("minor"))
+
 dry = release("bump", "patch", "--dry-run", cwd=sandbox)
-check("a dry run says what it would do", "2.0.1" in dry.stdout, dry.stdout)
+check("a dry run says what it would do", NEXT_PATCH in dry.stdout, dry.stdout)
 check("and writes nothing",
       V.__version__ in open(os.path.join(sandbox, "linrar/version.py")).read())
 
@@ -190,19 +197,19 @@ check("build metadata may not be written into the source",
       release("bump", "9.9.9+g1a2b3c", cwd=sandbox, expect=1).returncode == 1)
 
 bumped = release("bump", "minor", "--date", "2026-01-01", cwd=sandbox)
-check("a real bump reports the move", "2.1.0" in bumped.stdout, bumped.stdout)
+check("a real bump reports the move", NEXT_MINOR in bumped.stdout, bumped.stdout)
 check("version.py was rewritten",
-      '__version__ = "2.1.0"' in
+      f'__version__ = "{NEXT_MINOR}"' in
       open(os.path.join(sandbox, "linrar/version.py")).read())
 
 changelog = open(CHANGELOG).read()
 check("the CHANGELOG gained a dated heading for it",
-      "## 2.1.0 — 2026-01-01" in changelog, changelog[:200])
+      f"## {NEXT_MINOR} — 2026-01-01" in changelog, changelog[:200])
 check("an empty Unreleased section was opened above it",
-      changelog.index("## Unreleased") < changelog.index("## 2.1.0"))
+      changelog.index("## Unreleased") < changelog.index(f"## {NEXT_MINOR}"))
 check("the notes moved under the new number, none of them lost",
       "- Something a user would notice." in
-      changelog[changelog.index("## 2.1.0"):changelog.index("## 2.0.0")])
+      changelog[changelog.index(f"## {NEXT_MINOR}"):changelog.index("## 2.0.0")])
 check("the older release is untouched", "## 2.0.0" in changelog)
 
 check("bumping again refuses, because Unreleased is empty now",
@@ -228,10 +235,10 @@ check("check notices there is no git checkout to ask about tags",
 print("\n== the manifest an updater reads")
 dist = os.path.join(sandbox, "dist")
 os.makedirs(dist)
-with open(os.path.join(dist, "linrar-2.1.0.tar.gz"), "wb") as handle:
+with open(os.path.join(dist, f"linrar-{NEXT_MINOR}.tar.gz"), "wb") as handle:
     handle.write(b"not really a tarball, but it hashes just the same")
 with open(os.path.join(dist, "SHA256SUMS"), "w") as handle:
-    handle.write("0  linrar-2.1.0.tar.gz\n")
+    handle.write(f"0  linrar-{NEXT_MINOR}.tar.gz\n")
 
 made = release("manifest", "--dir", dist, "--commit", "a" * 40,
                "--date", "2026-01-01T00:00:00Z", cwd=sandbox)
@@ -239,8 +246,8 @@ check("manifest writes latest.json", made.returncode == 0, made.stderr[-200:])
 manifest = json.load(open(os.path.join(dist, "latest.json")))
 
 check("it declares its schema", manifest["schema"] == V.MANIFEST_SCHEMA)
-check("it names the version", manifest["version"] == "2.1.0")
-check("and the tag", manifest["tag"] == "v2.1.0")
+check("it names the version", manifest["version"] == NEXT_MINOR)
+check("and the tag", manifest["tag"] == f"v{NEXT_MINOR}")
 check("and the commit", manifest["commit"] == "a" * 40)
 check("and the channel", manifest["channel"] == "stable")
 check("it says what it needs to run",
@@ -260,7 +267,7 @@ for artifact in manifest["artifacts"]:
     check(f"{artifact['name']}: the size is right",
           artifact["size"] == len(body))
     check(f"{artifact['name']}: the URL points at this release",
-          artifact["url"].endswith(f"/download/v2.1.0/{artifact['name']}"),
+          artifact["url"].endswith(f"/download/v{NEXT_MINOR}/{artifact['name']}"),
           artifact["url"])
 check("the tarball is recognised as source",
       [a["kind"] for a in manifest["artifacts"] if a["name"].endswith(".tar.gz")]
@@ -273,16 +280,19 @@ check("a version that is newer than this tree's is an upgrade",
       is_newer(manifest["version"], V.__version__))
 
 print("\n== a prerelease travels as one")
+# The sandbox is on NEXT_MINOR by now, so an rc series starts from the one
+# after that -- again worked out rather than written down.
+RC_BASE = str(V.parse(NEXT_MINOR).bump("minor"))
 release("bump", "minor", "--pre", "rc", "--allow-empty", cwd=sandbox)
 check("the version gained the label",
-      '__version__ = "2.2.0-rc.1"' in
+      f'__version__ = "{RC_BASE}-rc.1"' in
       open(os.path.join(sandbox, "linrar/version.py")).read())
 state = json.loads(release("current", "--json", cwd=sandbox).stdout)
 check("and is reported as a prerelease", state["prerelease"] is True, state)
 check("with the channel to match", state["channel"] == "prerelease")
 release("bump", "minor", "--pre", "rc", "--allow-empty", cwd=sandbox)
 check("a second rc continues the series rather than starting one",
-      '__version__ = "2.2.0-rc.2"' in
+      f'__version__ = "{RC_BASE}-rc.2"' in
       open(os.path.join(sandbox, "linrar/version.py")).read())
 check("a bad label is refused",
       release("bump", "patch", "--pre", "1", "--allow-empty",
