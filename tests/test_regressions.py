@@ -25,7 +25,7 @@ from PyQt6.QtWidgets import QApplication
 app = QApplication([])
 
 from linrar.core import filetypes
-from linrar.core.backends.sevenzip import SevenZipBackend
+from linrar.core.backends.sevenzip import SevenZipBackend  # noqa: F401 (used below)
 from linrar.core.profiles import DEFAULT_PROFILES, Profile, PROFILES
 from linrar.core.settings import SETTINGS, Settings
 from linrar.ui import filelist
@@ -270,13 +270,61 @@ check("the service probe is a name no dialog can produce",
 check("and it has no NUL byte, which argv cannot carry",
       "\x00" not in passwords_module._PROBE)
 
-print("== the runner cannot be hung by one file")
+print("== the runner cannot be hung, or fooled, by one file")
 runner = open(os.path.join(ROOT, "tests/run_all.py")).read()
 check("every test file runs under a timeout", "timeout=TIMEOUT" in runner)
 check("a hang is reported rather than waited on", "TimeoutExpired" in runner)
 check("and named, so the file to blame is obvious", "TIMED OUT" in runner)
 check("the limit can be lowered from the environment",
       "LINRAR_TEST_TIMEOUT" in runner)
+check("a file that ran no checks is not reported as a pass",
+      "ran_checks == 0" in runner, "a silent no-op would look like success")
+
+print("== flattening needs nothing but '7z a'")
+# 7z has no exclude-paths switch.  Renaming the members afterwards with
+# `7z rn` worked on p7zip 16.02 and died with exit 255 on the 7-Zip release
+# a newer distribution ships, so the layout is built on disk instead and only
+# the one command every build agrees about is used.
+seven_source = open(
+    os.path.join(ROOT, "linrar/core/backends/sevenzip.py")
+).read()
+create_body = seven_source.split("    def create(", 1)[1].split(
+    "\n    def _stage_flat", 1
+)[0]
+check("creating an archive never shells out to 'rn'",
+      '"rn"' not in create_body, "7z rn is not portable across builds")
+check("and the version-specific flattener is gone",
+      "_flatten_paths" not in seven_source)
+check("a write command gets no bare -p, whose meaning differs by build",
+      SevenZipBackend._password_args(None, write_command=True) == [],
+      SevenZipBackend._password_args(None, write_command=True))
+check("while a read command still fails fast instead of prompting",
+      SevenZipBackend._password_args(None) == ["-p"],
+      SevenZipBackend._password_args(None))
+check("and a real password is passed either way",
+      SevenZipBackend._password_args("hunter2", write_command=True)
+      == ["-phunter2"])
+
+from linrar.core.backends.sevenzip import _plain_files, _link_or_copy
+
+flat_work = tempfile.mkdtemp(prefix="linrar-flat-")
+os.makedirs(os.path.join(flat_work, "tree", "deeper"))
+for relative in ("tree/one.txt", "tree/deeper/two.txt"):
+    with open(os.path.join(flat_work, relative), "w") as handle:
+        handle.write("x")
+walked = _plain_files([os.path.join(flat_work, "tree")], recurse=True)
+check("a folder expands to the files under it",
+      sorted(os.path.basename(p) for p in walked) == ["one.txt", "two.txt"],
+      walked)
+check("and to nothing when subfolders are switched off",
+      _plain_files([os.path.join(flat_work, "tree")], recurse=False) == [])
+linked = os.path.join(flat_work, "linked.txt")
+_link_or_copy(os.path.join(flat_work, "tree", "one.txt"), linked)
+check("staging a file costs a hard link where it can",
+      os.path.isfile(linked) and open(linked).read() == "x")
+check("and does not disturb the original",
+      os.path.isfile(os.path.join(flat_work, "tree", "one.txt")))
+shutil.rmtree(flat_work, ignore_errors=True)
 
 print("== paths shown in a menu stay short")
 long_path = os.path.expanduser("~/") + "/".join(["a-fairly-long-folder"] * 5) \

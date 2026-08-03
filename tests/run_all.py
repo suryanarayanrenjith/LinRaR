@@ -167,10 +167,24 @@ def main(argv: list[str]) -> int:
                 summary = line.strip()
                 break
         counts = summary.replace(" passed,", "").replace(" failed", "").split()
+        ran_checks = -1
         if len(counts) == 2 and counts[0].isdigit() and counts[1].isdigit():
             passed += int(counts[0])
             failed += int(counts[1])
-        if result.returncode == 0:
+            ran_checks = int(counts[0]) + int(counts[1])
+        if result.returncode == 0 and ran_checks == 0:
+            # A file that stepped aside — no AppImage runtime to build with,
+            # say.  It is not a failure, but printing it as "ok" makes doing
+            # nothing look exactly like verifying everything, and that is how a
+            # file quietly stops testing anything without anybody noticing.
+            skipped.append(name)
+            reason = next(
+                (ln.strip()[4:].strip() for ln in result.stdout.splitlines()
+                 if ln.strip().startswith("--  ")),
+                "it ran no checks",
+            )
+            print(f"{DIM}skipped  {reason}{OFF}")
+        elif result.returncode == 0:
             print(f"{GREEN}ok{OFF}    {summary or 'no summary'}  {DIM}{seconds:.1f}s{OFF}")
         else:
             broken.append(name)
@@ -197,7 +211,7 @@ def main(argv: list[str]) -> int:
     print(f"{colour}{BOLD}{passed} checks passed, {failed} failed{OFF}"
           f"  {DIM}across {ran} files in {elapsed:.1f}s{OFF}")
     if skipped:
-        print(f"{DIM}skipped (tools not installed): {', '.join(skipped)}{OFF}")
+        print(f"{DIM}skipped (nothing to run them with): {', '.join(skipped)}{OFF}")
     if broken:
         print(f"{RED}failing files: {', '.join(broken)}{OFF}")
     return 1 if broken else 0

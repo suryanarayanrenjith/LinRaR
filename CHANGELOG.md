@@ -62,6 +62,10 @@ All notable changes to LinRAR, newest first.
   could never come — the job simply stopped after `test_navigation.py` with
   nothing to say. GUI tests now count password prompts instead of showing
   them, so "LinRAR had to ask" is a failed check with a name.
+- **A test file that runs no checks is reported as skipped, not as a pass.**
+  One that steps aside — no AppImage runtime to build with, say — looked
+  exactly like one that verified everything, which is how a file quietly stops
+  testing anything without anybody noticing. The reason it gave is shown.
 
 ### Saved passwords are finally used
 
@@ -96,9 +100,16 @@ All notable changes to LinRAR, newest first.
 - **7-Zip archives no longer lose files when "Store full folder structure" is
   off.** 7z has no exclude-paths switch and was handed bare base names, so it
   could not find anything in a subfolder, said so as a *warning*, exited 1 and
-  produced an archive quietly missing them. The paths are now given in full
-  and flattened afterwards, and a base name already taken keeps its folder
-  rather than overwriting the other file.
+  produced an archive quietly missing them. The files are now laid out flat in
+  a scratch folder — hard-linked, so it costs nothing — and archived from
+  there, using only `7z a`, the one command every build agrees about. (Doing
+  it by renaming the members afterwards with `7z rn` worked on p7zip 16.02 and
+  died with exit 255 on the 7-Zip release newer distributions ship.) A base
+  name already taken keeps its folder rather than overwriting the other file.
+- **7-Zip write commands no longer pass a bare `-p`.** What it means is not
+  settled between builds — p7zip reads it as an empty password, newer 7-Zip
+  as "ask me" — and a command that decides to ask, with nothing on stdin,
+  dies rather than doing the work. Same rule the rar backend already follows.
 - **A file 7-Zip could not read is reported.** Its scan warnings sit behind an
   exit status that archive creation has to allow, so the words are now read as
   well as the status.

@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import os
 import re
+import shutil
+import tempfile
 from datetime import datetime
 from typing import Optional
 
@@ -138,16 +140,27 @@ class SevenZipBackend(ArchiveBackend):
         )
 
     @staticmethod
-    def _password_args(password: Optional[str]) -> list[str]:
+    def _password_args(
+        password: Optional[str], write_command: bool = False
+    ) -> list[str]:
         """Build 7z's password switch.
 
         Unlike rar, p7zip has no reliable way to read a password from a pipe, so
         it must go on the command line.  On a multi-user machine that makes it
         briefly visible in the process list; RAR and ZIP archives use stdin and
-        are not affected.  A bare ``-p`` supplies an empty password so 7z fails
-        fast on an encrypted archive instead of prompting.
+        are not affected.  On a *read* command a bare ``-p`` supplies an empty
+        password so 7z fails fast on an encrypted archive instead of prompting.
+
+        A **write** command gets no switch at all when there is no password.
+        What a bare ``-p`` means is not settled between builds — p7zip 16.02
+        reads it as an empty password, newer 7-Zip releases as "ask me" — and a
+        modifying command that decides to ask, with nothing on stdin, dies with
+        exit 255 rather than doing the work.  This is the same rule the rar
+        backend follows for the same reason, one tool along.
         """
-        return [f"-p{password}"] if password else ["-p"]
+        if password:
+            return [f"-p{password}"]
+        return [] if write_command else ["-p"]
 
     def run_raw(
         self,
@@ -381,40 +394,124 @@ class SevenZipBackend(ArchiveBackend):
             argv.append(f"-p{options.password}")
             if options.encrypt_headers:
                 argv.append("-mhe=on")
-        if options.delete_after:
-            argv.append("-sdel")
 
-        # Feed paths relative to the common base so the stored folder
-        # structure matches what the user selected, exactly as the RAR
-        # backend does.  Absolute paths would be stored flattened.
+        archive = os.path.abspath(options.archive_path)
         base = options.base_folder
         if not base and files:
             base = os.path.dirname(os.path.abspath(files[0]))
-        members = []
-        for item in files:
-            try:
-                members.append(os.path.relpath(item, base) if base else item)
-            except ValueError:
-                members.append(item)
-        archive = os.path.abspath(options.archive_path)
-        argv.extend(["--", archive])
-        argv.extend(members)
-        runner = self._run(argv, ctx, allowed=(0, 1), cwd=base or None)
-        # 7z reports a file it could not read as a *warning* and still exits 1,
-        # which is an allowed status here; without this the archive would come
-        # out quietly short of the files the user selected.
-        self._reject_missing_sources(runner.output)
 
-        if not options.store_paths:
-            # 7-Zip has no "exclude paths" switch, so the paths are given to it
-            # in full (they are how it finds the files at all) and flattened
-            # afterwards, which for a 7z archive rewrites only the header.
-            # Handing it bare basenames instead — as this used to — made every
-            # file in a subfolder unfindable, and it silently archived the rest.
-            self._flatten_paths(archive, options.password, ctx)
+        staging = ""
+        if options.store_paths:
+            # Feed paths relative to the common base so the stored folder
+            # structure matches what the user selected, exactly as the RAR
+            # backend does.  Absolute paths would be stored flattened.
+            members = []
+            for item in files:
+                try:
+                    members.append(os.path.relpath(item, base) if base else item)
+                except ValueError:
+                    members.append(item)
+            if options.delete_after:
+                argv.append("-sdel")
+        else:
+            staging, members = self._stage_flat(files, options, archive, ctx)
+            base = staging
+            # -sdel would delete the staged links rather than the originals,
+            # so the sources are removed here once the archive is safely made.
 
+        try:
+            argv.extend(["--", archive])
+            argv.extend(members)
+            runner = self._run(argv, ctx, allowed=(0, 1), cwd=base or None)
+            # 7z reports a file it could not read as a *warning* and still
+            # exits 1, which is an allowed status here; without this the
+            # archive would come out quietly short of the files the user
+            # selected.
+            self._reject_missing_sources(runner.output)
+        finally:
+            if staging:
+                shutil.rmtree(staging, ignore_errors=True)
+
+        if staging and options.delete_after:
+            _delete_sources(files)
         if options.test_after:
             self.test(options.archive_path, options.password, ctx)
+
+    def _stage_flat(
+        self,
+        files: list[str],
+        options: CompressOptions,
+        archive: str,
+        ctx: Optional[TaskContext],
+    ) -> tuple[str, list[str]]:
+        """Lay the selection out flat in a scratch folder, and name the members.
+
+        WinRAR's "do not store paths" has no equivalent switch in 7-Zip, and
+        the two obvious ways of faking it are both wrong.  Handing 7z bare base
+        names — which LinRAR used to do — leaves it unable to find anything in
+        a subfolder, and it reports that as a warning and quietly builds an
+        archive without them.  Renaming the members afterwards with ``7z rn``
+        works, but only on some builds: it is a fifteen-year-old command whose
+        argument handling differs between p7zip 16.02 and the modern 7-Zip
+        releases, and on a distribution shipping the latter it failed outright.
+
+        So the layout is built on disk instead and only ``7z a`` is used, which
+        every build agrees about.  Each file is **hard-linked** into the
+        scratch folder — free, and beside the archive so it usually lands on
+        the same filesystem — falling back to a copy across devices.
+
+        A base name already taken keeps its folder, exactly as before: losing
+        one of two files to a silent overwrite is worse than storing one of
+        them under the path it came from, and the message says which.
+        """
+        plain = _plain_files(files, options.recurse_subfolders)
+        if not plain:
+            raise OperationError("There are no files to add.")
+
+        # Beside the archive: the sources are usually on that filesystem too,
+        # which makes every link free.  Falls back to a copy when they are not.
+        parent = os.path.dirname(archive) or "."
+        try:
+            staging = tempfile.mkdtemp(prefix=".linrar-flat-", dir=parent)
+        except OSError:
+            staging = tempfile.mkdtemp(prefix="linrar-flat-")
+
+        base = options.base_folder or os.path.dirname(os.path.abspath(plain[0]))
+        members: list[str] = []
+        taken: set[str] = set()
+        try:
+            for source in plain:
+                name = os.path.basename(source)
+                if name in taken:
+                    # Keep this one's folder rather than overwrite the other.
+                    try:
+                        relative = os.path.relpath(source, base)
+                    except ValueError:
+                        relative = name
+                    if relative.startswith(".."):
+                        relative = name
+                    ctx = ctx or TaskContext()
+                    ctx.on_message(
+                        f"{relative} kept its folder: another file is already "
+                        f"called {name}"
+                    )
+                    if relative == name:
+                        continue  # nothing left to distinguish them by
+                    target = os.path.join(staging, relative)
+                else:
+                    taken.add(name)
+                    target = os.path.join(staging, name)
+                    relative = name
+                os.makedirs(os.path.dirname(target) or staging, exist_ok=True)
+                _link_or_copy(source, target)
+                members.append(relative)
+        except OSError as exc:
+            shutil.rmtree(staging, ignore_errors=True)
+            raise OperationError(
+                "The files could not be prepared for archiving without their "
+                f"folders.\n\n{exc}"
+            ) from exc
+        return staging, members
 
     @staticmethod
     def _reject_missing_sources(output: str) -> None:
@@ -463,59 +560,6 @@ class SevenZipBackend(ArchiveBackend):
             + "\n".join(dict.fromkeys(details[:6]))
         )
 
-    def _flatten_paths(
-        self,
-        archive: str,
-        password: Optional[str],
-        ctx: Optional[TaskContext],
-    ) -> None:
-        """Rename every member down to its base name, WinRAR's ``-ep``.
-
-        A base name already claimed by another member is left alone: losing
-        one of two files to a silent overwrite is worse than storing one of
-        them under the path it came from, and the message says which.
-        """
-        ctx = ctx or TaskContext()
-        try:
-            info = self.read_info(archive, password)
-        except OperationError:
-            return
-        taken = {e.name for e in info.entries if "/" not in e.name}
-        pairs: list[tuple[str, str]] = []
-        clashes: list[str] = []
-        for entry in info.entries:
-            if entry.is_dir or "/" not in entry.name:
-                continue
-            base = entry.name.rsplit("/", 1)[-1]
-            if base in taken:
-                clashes.append(entry.name)
-                continue
-            taken.add(base)
-            pairs.append((entry.name, base))
-        if pairs:
-            self.rename_members(archive, pairs, password, ctx)
-        for name in clashes:
-            ctx.on_message(
-                f"{name} kept its folder: another file is already called "
-                f"{name.rsplit('/', 1)[-1]}"
-            )
-
-        # The folders the renamed files came out of are now empty, and an
-        # archive asked not to store paths should not carry them.  Anything
-        # still living inside one (a clash above) keeps its folder.
-        kept = {name.rsplit("/", 1)[0] for name in clashes}
-        empty = [
-            entry.name for entry in info.entries
-            if entry.is_dir
-            and not any(k == entry.name or k.startswith(entry.name + "/")
-                        for k in kept)
-        ]
-        if empty:
-            # Deepest first, so a parent is only removed once it is truly bare.
-            self.delete_members(
-                archive, sorted(empty, key=lambda n: -n.count("/")), password, ctx
-            )
-
     def rename_member(
         self,
         path: str,
@@ -534,7 +578,8 @@ class SevenZipBackend(ArchiveBackend):
         ctx: Optional[TaskContext] = None,
     ) -> None:
         exe = self._require()
-        argv = [exe, "rn", "-y", "-bso0", *self._password_args(password), "--", path]
+        argv = [exe, "rn", "-y", "-bso0",
+                *self._password_args(password, write_command=True), "--", path]
         for old_name, new_name in pairs:
             argv.extend([old_name, new_name])
         self._run(argv, ctx, allowed=(0, 1))
@@ -547,6 +592,56 @@ class SevenZipBackend(ArchiveBackend):
         ctx: Optional[TaskContext] = None,
     ) -> None:
         exe = self._require()
-        argv = [exe, "d", "-y", "-bso0", *self._password_args(password), "--", path]
+        argv = [exe, "d", "-y", "-bso0",
+                *self._password_args(password, write_command=True), "--", path]
         argv.extend(members)
         self._run(argv, ctx, allowed=(0, 1))
+
+
+def _plain_files(paths: list[str], recurse: bool) -> list[str]:
+    """Expand a selection into the files it really covers, folders walked."""
+    out: list[str] = []
+    seen: set[str] = set()
+    for item in paths:
+        if os.path.isdir(item):
+            if not recurse:
+                continue
+            for root, dirs, names in os.walk(item):
+                dirs.sort(key=str.lower)
+                for name in sorted(names, key=str.lower):
+                    full = os.path.join(root, name)
+                    if full not in seen:
+                        seen.add(full)
+                        out.append(full)
+        elif os.path.exists(item) and item not in seen:
+            seen.add(item)
+            out.append(item)
+    return out
+
+
+def _link_or_copy(source: str, target: str) -> None:
+    """Put *source* at *target* as cheaply as the filesystem allows.
+
+    A hard link costs nothing and is what happens whenever the scratch folder
+    and the file are on the same filesystem, which is the usual case because
+    the folder is made beside the archive.  Across devices — or where links
+    are not supported at all — there is no choice but to copy.
+    """
+    try:
+        os.link(source, target)
+        return
+    except OSError:
+        pass
+    shutil.copy2(source, target)
+
+
+def _delete_sources(paths: list[str]) -> None:
+    """"Delete files after archiving", once the archive is safely written."""
+    for item in paths:
+        try:
+            if os.path.isdir(item) and not os.path.islink(item):
+                shutil.rmtree(item)
+            else:
+                os.unlink(item)
+        except OSError:
+            pass

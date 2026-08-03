@@ -200,14 +200,26 @@ locked" case. So `_reject_missing_sources` reads the words too, and the
 archive that came out short is reported rather than handed back as a success.
 This is the same lesson as unrar's exit status, one tool along.
 
-**7-Zip has no "exclude paths" switch.** Turning off *Store full folder
-structure* used to hand it bare base names, which it could not find, so
-everything in a subfolder was silently dropped. The paths are given in full —
-they are how it finds the files at all — and the members are flattened
-afterwards with `7z rn`, which for a 7z archive rewrites only the header. A
-base name already claimed keeps its folder: losing one of two files to a
-silent overwrite is worse than storing one of them under its path, and the
-message says which.
+**7-Zip has no "exclude paths" switch**, and both obvious ways of faking one
+are wrong. Handing it bare base names — which LinRAR used to do — leaves it
+unable to find anything in a subfolder, and it reports that as a warning and
+quietly builds an archive without them. Renaming the members afterwards with
+`7z rn` works, but only on some builds: it is a fifteen-year-old command whose
+argument handling differs between p7zip 16.02 and the modern 7-Zip releases,
+and on a distribution shipping the latter it failed outright with exit 255.
+So `_stage_flat` builds the layout **on disk** instead — each file hard-linked
+into a scratch folder beside the archive, falling back to a copy across
+devices — and only `7z a` is used, which every build agrees about. A base name
+already claimed keeps its folder: losing one of two files to a silent
+overwrite is worse than storing one of them under its path, and the message
+says which.
+
+**The same lesson twice: a switch whose meaning depends on the build.** A bare
+`-p` is an empty password to p7zip and a request to prompt to newer 7-Zip, so
+7z *write* commands are given no password switch at all when there is none —
+exactly the rule the rar backend follows for `-p-`. Nothing that modifies an
+archive should be able to decide to ask a question when there is nobody there
+to answer it.
 
 ## Two traps that cost real debugging time
 
