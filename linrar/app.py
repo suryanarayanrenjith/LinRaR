@@ -299,9 +299,11 @@ def main(argv: list[str] | None = None) -> int:
         print(USAGE)
         return 0
     if request.query == "--version":
-        from .ui.dialogs.misc import APP_VERSION
+        # "LinRAR <version>" first, always, so a script can cut the second
+        # field; anything known about the build follows in brackets.
+        from .version import describe
 
-        print(f"LinRAR {APP_VERSION}")
+        print(f"LinRAR {describe()}")
         return 0
     if request.query == "--config-info":
         # For administrators: which files are in play, and what each key
@@ -352,6 +354,9 @@ def main(argv: list[str] | None = None) -> int:
         window.report_path(request.missing[0])
 
     _check_tools(window)
+    # Only when the user asked for it in Settings, and only on a timer once the
+    # window is up: opening LinRAR must never wait on the network.
+    window.start_update_check()
     if action:
         _run_action(window, action, paths)
     return app.exec()

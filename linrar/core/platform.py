@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import os
 import sys
+from dataclasses import dataclass
 from typing import TextIO
 
 #: What the launcher and ``main()`` return when the system is not supported.
@@ -114,6 +115,129 @@ def warning() -> str:
         "unsupported.\nArchive operations, settings and desktop integration "
         "may all misbehave."
     )
+
+
+# -------------------------------------------------------------- architecture
+#
+# Linux runs on a great deal more than x86, and LinRAR runs wherever Python and
+# Qt do -- which is everywhere its distribution builds them.  What is *not*
+# everywhere is the tools it drives:
+#
+#   * ``unrar``, ``7z``, ``zip`` and ``mksquashfs`` are open source and are
+#     built by every distribution for every architecture it supports;
+#   * ``rar`` -- the only thing that can *write* a RAR archive -- is shareware,
+#     is shipped as a binary by RARLAB, and exists for four architectures;
+#   * the AppImage runtime LinRAR wraps self-extracting archives in is
+#     published for four as well, and not the same four.
+#
+# So the honest answer on a POWER or RISC-V machine is "everything works except
+# creating RAR archives and AppImages, and here is why" -- not a Missing label
+# beside an Install button that cannot succeed.
+
+
+@dataclass(frozen=True)
+class Architecture:
+    """The machine LinRAR is running on, and what is available for it."""
+
+    #: The normalised name: ``x86_64``, ``aarch64``, ``riscv64``...
+    key: str
+    #: What ``uname -m`` actually said, which may be a synonym.
+    machine: str
+    label: str
+    #: Does RARLAB publish ``rar``/``unrar`` binaries for it?
+    rarlab: bool = False
+    #: Is there a published AppImage type 2 runtime for it?
+    appimage: bool = False
+    #: 64 or 32, for the odd message that needs to say.
+    bits: int = 64
+
+    @property
+    def known(self) -> bool:
+        return self.key in ARCHITECTURES
+
+
+#: Every architecture with a Linux port worth naming, what to call it, and
+#: which of the two binary-only pieces exist for it.  A machine that is not in
+#: here still runs LinRAR: it is simply described as itself.
+ARCHITECTURES: dict[str, tuple[str, bool, bool, int]] = {
+    #  key           label                       rarlab appimage bits
+    "x86_64":     ("64-bit x86 (x86-64)",          True,  True,  64),
+    "i686":       ("32-bit x86",                   True,  True,  32),
+    "aarch64":    ("64-bit ARM (AArch64)",         True,  True,  64),
+    "armv7l":     ("32-bit ARM (hard float)",      True,  True,  32),
+    "armv6l":     ("32-bit ARM (ARMv6)",           False, True,  32),
+    "riscv64":    ("64-bit RISC-V",                False, False, 64),
+    "ppc64le":    ("64-bit POWER (little endian)", False, False, 64),
+    "ppc64":      ("64-bit POWER (big endian)",    False, False, 64),
+    "s390x":      ("IBM Z (s390x)",                False, False, 64),
+    "loongarch64": ("64-bit LoongArch",            False, False, 64),
+    "mips64el":   ("64-bit MIPS (little endian)",  False, False, 64),
+    "mipsel":     ("32-bit MIPS (little endian)",  False, False, 32),
+    "sparc64":    ("64-bit SPARC",                 False, False, 64),
+    "alpha":      ("DEC Alpha",                    False, False, 64),
+    "m68k":       ("Motorola 68000",               False, False, 32),
+    "sh4":        ("SuperH",                       False, False, 32),
+    "hppa":       ("PA-RISC",                      False, False, 32),
+}
+
+#: What the kernel may call a machine, and what LinRAR calls it.  ``uname -m``
+#: is not standardised: the same processor answers ``amd64`` on one system and
+#: ``x86_64`` on another, and normalising once here keeps every table below
+#: from having to know that.
+_MACHINE_ALIASES = {
+    "amd64": "x86_64", "x64": "x86_64", "x86-64": "x86_64",
+    "i386": "i686", "i486": "i686", "i586": "i686", "x86": "i686",
+    "arm64": "aarch64", "armv8l": "aarch64", "armv8b": "aarch64",
+    "armv7": "armv7l", "armhf": "armv7l", "armv7hl": "armv7l",
+    "armv6": "armv6l", "arm": "armv6l",
+    "riscv": "riscv64", "rv64": "riscv64", "riscv64gc": "riscv64",
+    "power8": "ppc64le", "power9": "ppc64le", "powerpc64le": "ppc64le",
+    "powerpc64": "ppc64", "powerpc": "ppc64",
+    "loong64": "loongarch64", "loongarch": "loongarch64",
+    "mips64": "mips64el", "mips": "mipsel",
+    "sun4v": "sparc64", "sparc": "sparc64",
+    "parisc": "hppa", "parisc64": "hppa",
+}
+
+
+def machine() -> str:
+    """What ``uname -m`` says, verbatim and lowercased."""
+    try:
+        return (os.uname().machine or "").lower()
+    except AttributeError:                 # pragma: no cover - not Linux
+        import platform as _stdlib
+
+        return (_stdlib.machine() or "").lower()
+
+
+def normalise_machine(name: str) -> str:
+    """Turn any spelling of a machine into the one LinRAR's tables use."""
+    lowered = (name or "").strip().lower()
+    return _MACHINE_ALIASES.get(lowered, lowered)
+
+
+def architecture(name: str = "") -> Architecture:
+    """Describe the machine this is running on, or the one named."""
+    raw = name or machine()
+    key = normalise_machine(raw)
+    if key in ARCHITECTURES:
+        label, rarlab, appimage, bits = ARCHITECTURES[key]
+        return Architecture(key, raw, label, rarlab, appimage, bits)
+    # Unknown, which is not the same as unsupported: LinRAR itself is Python
+    # and Qt, and both run anywhere they are built.  Only the binary-only
+    # pieces are assumed absent, because assuming otherwise means offering a
+    # download that will 404.
+    bits = 32 if any(tag in key for tag in ("32", "i3", "i4", "i5", "i6")) else 64
+    return Architecture(key or "unknown", raw, key or "an unknown machine",
+                        False, False, bits)
+
+
+def describe_machine() -> str:
+    """One line naming the architecture, for reports and ``--config-info``."""
+    arch = architecture()
+    if arch.known:
+        return f"{arch.label} ({arch.machine})"
+    return f"{arch.machine or 'unknown machine'} (not one LinRAR has a note about)"
 
 
 def ensure_supported(stream: TextIO | None = None) -> None:

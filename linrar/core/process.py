@@ -20,10 +20,22 @@ from typing import Callable, Iterable, Optional
 PERCENT_RE = re.compile(r"(\d{1,3})%")
 
 # "Adding    foo.txt", "Extracting  bar/baz.txt", "Testing     qux"
+#
+# Two or more spaces, never one: rar pads the verb out to a fixed column for a
+# member, and writes ordinary prose with single spaces.  That is what tells
+# "Extracting  photos/a.jpg" (a member) from "Extracting from backup.rar"
+# (the header line rar prints once per archive), which was otherwise read as a
+# member called "from backup.rar".
 FILE_LINE_RE = re.compile(
     r"^\s*(Adding|Updating|Extracting|Testing|Creating|Deleting|Packing|"
-    r"Skipping|Replacing)\s+(.+?)(?:\s{2,}.*)?$"
+    r"Skipping|Replacing)\s{2,}(.+?)(?:\s{2,}.*)?$"
 )
+
+# rar pads the name out to a status column and then backspaces over the tail to
+# write " 42%", "  OK" or "  Failed".  When the name is long enough to reach
+# that column there is only one space left between the two, so the status ends
+# up glued to the name and has to be taken off it explicitly.
+_STATUS_TAIL_RE = re.compile(r"(?:\s+(?:\d{1,3}%|OK|Failed))+\s*$")
 
 
 class LineAssembler:
@@ -259,4 +271,5 @@ def parse_file_line(line: str) -> Optional[tuple[str, str]]:
     match = FILE_LINE_RE.match(line)
     if not match:
         return None
-    return match.group(1), match.group(2).strip()
+    name = _STATUS_TAIL_RE.sub("", match.group(2)).strip()
+    return (match.group(1), name) if name else None

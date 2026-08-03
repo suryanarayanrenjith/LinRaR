@@ -801,49 +801,35 @@ def _clean_comment(block: str) -> str:
 def _make_progress_handlers(ctx: TaskContext):
     """Build the stdout handlers that translate rar's output into progress.
 
-    rar only ever prints a percentage for the file it is currently processing,
-    and it makes more than one pass over some files (an analysis pass before the
-    compression pass) so that number jumps backwards.  The overall figure is
-    therefore derived from how many members have been started, and is clamped so
-    it can never regress.
+    rar rewrites one terminal line per member: it prints ``Extracting  name``,
+    then backspaces over the tail to show ``  0%``, `` 37%`` and finally
+    ``  OK`` before the newline.  So the *finished* line and the *live* line
+    both carry the name, and reading it only from the finished one — which is
+    what LinRAR used to do — meant the window named each file as it ended and
+    counted it one member late.  Both are parsed here, and
+    :class:`TaskContext` turns them into the two bars.
     """
-    state = {"current": "", "last_pct": -1, "index": 0, "overall": 0}
 
-    def emit_overall(pct: int) -> None:
-        total = ctx.total_items
-        if total > 0:
-            done = max(state["index"] - 1, 0) + pct / 100.0
-            value = int(min(100.0, done * 100.0 / total))
-        else:
-            value = pct
-        if value > state["overall"]:
-            state["overall"] = value
-            ctx.on_total(value)
-
-    def observe(line: str) -> None:
-        pct = parse_percent(line)
-        if pct is not None and pct != state["last_pct"]:
-            state["last_pct"] = pct
-            ctx.on_percent(pct)
-            emit_overall(pct)
-
-    def handle_partial(line: str) -> None:
-        observe(line)
-
-    def handle_line(line: str) -> None:
+    def note(line: str) -> None:
         parsed = parse_file_line(line)
         if parsed:
             verb, filename = parsed
-            if filename != state["current"]:
-                state["current"] = filename
-                state["last_pct"] = -1
-                # "Creating" marks a folder being made (or the archive itself),
-                # which is not one of the members we are counting towards.
-                if verb != "Creating":
-                    state["index"] += 1
-                ctx.on_file(filename)
-                emit_overall(0)
-        observe(line)
+            # "Creating" is a folder being made, not a member being processed.
+            if verb != "Creating":
+                ctx.start_file(filename)
+        percent = parse_percent(line)
+        if percent is not None:
+            ctx.advance(percent)
+        elif parsed and line.rstrip().endswith("OK"):
+            # The closing line has no percentage of its own, and a member that
+            # finished is a member that is 100% done.
+            ctx.advance(100)
+
+    def handle_partial(line: str) -> None:
+        note(line)
+
+    def handle_line(line: str) -> None:
+        note(line)
         stripped = line.strip()
         if stripped:
             ctx.on_message(stripped)

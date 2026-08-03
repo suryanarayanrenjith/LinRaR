@@ -217,6 +217,95 @@ def _document(x: float = 11, y: float = 5) -> str:
     """
 
 
+# ------------------------------------------------------- file type glyphs
+#
+# One shape for every kind of file the browser can list, drawn as the same
+# sheet of paper with a coloured band across the bottom carrying a mark.  It is
+# how every file manager has done it since Windows 95, and for a good reason:
+# at 16 pixels the colour is what the eye reads, the mark only confirms it, and
+# a family of icons that share an outline are told apart faster than a set of
+# unrelated pictures.
+#
+# The marks are drawn as strokes rather than as <text>, because Qt's SVG
+# renderer picks whatever font it can find and a letter that reflows is worse
+# than no letter at all.
+
+def _sheet(x: float = 10, y: float = 3, rules: int = 0) -> str:
+    """The blank page every file icon is built on."""
+    body = f"""
+      <path d="M{x} {y + 2} a2 2 0 0 1 2-2 h15 l9 9 v24 a2 2 0 0 1 -2 2
+               h-22 a2 2 0 0 1 -2 -2 z" fill="url(#pap)" stroke="{_P.paper_edge}"
+            stroke-width="1.3"/>
+      <path d="M{x + 17} {y} v9 h9 z" fill="#DCE4EC" stroke="{_P.paper_edge}"
+            stroke-width="1.1" stroke-linejoin="round"/>
+    """
+    for line in range(rules):
+        width = 15 if line < rules - 1 else 10
+        body += (f'<path d="M{x + 5} {y + 15 + line * 5} h{width}" '
+                 f'stroke="{_P.ink}" stroke-width="1.6" stroke-linecap="round" '
+                 'opacity="0.6"/>')
+    return body
+
+
+def _band(mid: str, dark: str, mark: str = "") -> str:
+    """The coloured band across the foot of the sheet, and what it carries."""
+    # Deliberately wider than the sheet it sits on.  At sixteen pixels the band
+    # is most of what survives, so it carries the identity and the page behind
+    # it is only context.
+    return f"""
+      <rect x="4.5" y="25.5" width="34" height="17" rx="3.4" fill="{dark}"/>
+      <rect x="5.7" y="26.7" width="31.6" height="14.6" rx="2.8" fill="{mid}"/>
+      <rect x="6.9" y="27.9" width="29.2" height="5.2" rx="2.2" fill="#ffffff"
+            opacity="0.22"/>
+      <g stroke="#ffffff" fill="none" stroke-width="2"
+         stroke-linecap="round" stroke-linejoin="round">{mark}</g>
+    """
+
+
+def _typed_file(mid: str, dark: str, mark: str = "", rules: int = 0) -> str:
+    return f'<g filter="url(#sh)">{_sheet(rules=rules)}{_band(mid, dark, mark)}</g>'
+
+
+#: Every mark is drawn inside the band, which spans x 6.5..36.5 and y 27..42.
+_MARKS = {
+    # Straight-line letters trace cleanly as polylines at any size.
+    "W": '<path d="M14 31.5 L16.7 38 L19.5 33.5 L22.3 38 L25 31.5"/>',
+    "X": '<path d="M15.5 31.5 L24 38 M24 31.5 L15.5 38"/>',
+    "P": ('<path d="M16 38 V31.5 h4.4 a2.6 2.6 0 0 1 0 5.2 H16"/>'),
+    "A": '<path d="M15 38 L19.5 31.3 L24 38 M16.6 35.6 h5.8"/>',
+    "lines": ('<path d="M13 32.6 h17 M13 35.6 h17 M13 38.6 h11"'
+              ' stroke-width="2.2"/>'),
+    "grid": ('<rect x="14" y="30.6" width="15" height="8.8" rx="1"/>'
+             '<path d="M14 35 h15 M21.5 30.6 v8.8" stroke-width="1.6"/>'),
+    "slide": ('<rect x="13.5" y="30.4" width="16" height="9.2" rx="1.4"/>'
+              '<path d="M16.5 37 h6" stroke-width="1.8"/>'),
+    "image": ('<rect x="13.5" y="30.4" width="16" height="9.2" rx="1.4"/>'
+              '<path d="M15 37.6 l4-4 l3.4 3 l2.6-2.4 l3.4 3.4"'
+              ' stroke-width="1.7"/>'
+              '<circle cx="17.4" cy="33.2" r="1.15" fill="#ffffff"'
+              ' stroke="none"/>'),
+    "note": ('<path d="M20 38.4 V31 l7 -1.4 v7"/>'
+             '<circle cx="18.2" cy="38.4" r="1.9" fill="#ffffff"'
+             ' stroke="none"/>'
+             '<circle cx="25.2" cy="36.9" r="1.9" fill="#ffffff"'
+             ' stroke="none"/>'),
+    "play": ('<path d="M18.5 30.8 L27 34.9 L18.5 39 z" fill="#ffffff"'
+             ' stroke-linejoin="round"/>'),
+    "code": '<path d="M18 31.6 L14 34.9 L18 38.2 M25 31.6 L29 34.9 L25 38.2"/>',
+    "terminal": ('<path d="M14.5 31.8 L18.5 34.9 L14.5 38"/>'
+                 '<path d="M21.5 38.4 h8" stroke-width="2.2"/>'),
+    "disc": ('<circle cx="21.5" cy="34.9" r="4.6"/>'
+             '<circle cx="21.5" cy="34.9" r="1.3" fill="#ffffff"'
+             ' stroke="none"/>'),
+    "database": ('<ellipse cx="21.5" cy="31.6" rx="6" ry="2.1"/>'
+                 '<path d="M15.5 31.6 v6.2 a6 2.1 0 0 0 12 0 v-6.2"/>'
+                 '<path d="M15.5 34.9 a6 2.1 0 0 0 12 0" stroke-width="1.5"/>'),
+    "key": ('<circle cx="17.8" cy="34.9" r="3.1"/>'
+            '<path d="M20.9 34.9 h8 M26.4 34.9 v2.8 M28.9 34.9 v2.4"'
+            ' stroke-width="1.9"/>'),
+}
+
+
 def _badge(cx: float, cy: float, r: float, light: str, mid: str, dark: str) -> str:
     """A glossy circular badge used for the small overlay marks."""
     return f"""
@@ -483,6 +572,31 @@ def _icon_svg() -> dict[str, str]:
             """
         ),
         "file": _wrap(_document()),
+        # -- one per kind of file the browser can list --------------------
+        "file-text": _wrap(_typed_file(_P.steel[1], _P.steel[2],
+                                       _MARKS["lines"], rules=3)),
+        "file-word": _wrap(_typed_file("#2B5FB8", "#1B3F80", _MARKS["W"],
+                                       rules=3)),
+        "file-excel": _wrap(_typed_file("#1D7044", "#12492C", _MARKS["grid"],
+                                        rules=3)),
+        "file-powerpoint": _wrap(_typed_file("#C4471F", "#8C2F12",
+                                             _MARKS["slide"], rules=3)),
+        "file-pdf": _wrap(_typed_file(_P.red[1], _P.red[2], _MARKS["lines"],
+                                      rules=3)),
+        "file-document": _wrap(_typed_file("#7A4BA8", "#53307A",
+                                           _MARKS["lines"], rules=3)),
+        "file-image": _wrap(_typed_file("#B0771C", "#7C5210", _MARKS["image"])),
+        "file-audio": _wrap(_typed_file("#1F7F86", "#125459", _MARKS["note"])),
+        "file-video": _wrap(_typed_file("#8A2D6B", "#5D1B47", _MARKS["play"])),
+        "file-code": _wrap(_typed_file("#2E6F8E", "#1C4A60", _MARKS["code"],
+                                       rules=3)),
+        "file-font": _wrap(_typed_file("#5B5F70", "#3A3D4A", _MARKS["A"])),
+        "file-exec": _wrap(_typed_file("#4A4F5C", "#2C3038",
+                                       _MARKS["terminal"])),
+        "file-data": _wrap(_typed_file("#4C6B8A", "#2F455C",
+                                       _MARKS["database"])),
+        "file-disc": _wrap(_typed_file("#6B6F7A", "#43464F", _MARKS["disc"])),
+        "file-key": _wrap(_typed_file("#9A7A17", "#6B540D", _MARKS["key"])),
         "disk": _wrap(
             f"""
             <g filter="url(#sh)">

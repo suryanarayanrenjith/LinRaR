@@ -225,24 +225,28 @@ check("Compression profiles is only under Options",
       ["Options > Compression profiles..."],
       menus.get(win.act_profiles))
 
-print("== the SFX dialog offers both formats")
+print("== the SFX windows: the kind, then the AppImage's options")
+# The two formats are not settings of one thing.  Asking which comes first, in
+# its own small window; the options window that follows describes an AppImage
+# on every page, so it no longer offers a format at all.
 from linrar.core.sfx import APPIMAGE, RAR_STUB
-from linrar.ui.dialogs.sfx import SfxDialog
+from linrar.ui.dialogs.sfx import SfxDialog, SfxKindDialog
+
+chooser = SfxKindDialog(win, archive_path=os.path.join(root, "demo.rar"))
+check("the chooser starts with nothing chosen", chooser.chosen == "")
+chooser._choose(RAR_STUB)
+check("and reports the stub when it is picked", chooser.chosen == RAR_STUB)
+chooser.close()
 
 sfx_dialog = SfxDialog(win, archive_path=os.path.join(root, "demo.rar"))
-check("AppImage is the default", sfx_dialog.sfx_format == APPIMAGE)
+check("the options window is the AppImage's", sfx_dialog.sfx_format == APPIMAGE)
 check("its option pages are live", sfx_dialog.tabs.isEnabled())
-sfx_dialog.stub_radio.setChecked(True)
-check("the stub can be chosen", sfx_dialog.sfx_format == RAR_STUB)
-check("and takes no options", not sfx_dialog.tabs.isEnabled())
-sfx_dialog.appimage_radio.setChecked(True)
-check("switching back restores them", sfx_dialog.tabs.isEnabled())
-stub_only = SfxDialog(win, sfx_format=RAR_STUB, allow_stub=False)
-check("the stub can be withheld",
-      not stub_only.stub_radio.isVisible() and
-      stub_only.sfx_format == APPIMAGE)
+check("it offers no format to choose",
+      not hasattr(sfx_dialog, "stub_radio")
+      and not hasattr(sfx_dialog, "appimage_radio"))
+check("and says which format it configures",
+      "AppImage" in sfx_dialog.windowTitle(), sfx_dialog.windowTitle())
 sfx_dialog.close()
-stub_only.close()
 
 print("== the toolbar can hold the new buttons")
 keys = {key for key, _attribute, _caption in mw.TOOLBAR_CATALOGUE}

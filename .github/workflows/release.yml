@@ -1,0 +1,311 @@
+name: release
+
+# Publishing a version of LinRAR, start to finish.
+#
+# The trigger is the version number itself.  Every push to main is inspected:
+# if __version__ in linrar/version.py names a version that has no tag yet, that
+# version is tested, packaged and published, and if it does not, this workflow
+# does nothing and says so.  So releasing is one commit —
+#
+#     tools/release.py bump patch && git commit -am "release 2.0.1" && git push
+#
+# — and an ordinary change to the code is never mistaken for one.  Running the
+# workflow by hand with a "bump" can do that commit for you as well.
+#
+# Nothing is published that has not passed the full suite in tests.yml first,
+# and nothing is published twice: the tag is created by the same call that
+# creates the release, so a failure part way through leaves no half-release
+# behind and the next run simply tries again.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: "Raise the version first (none = release what main says)"
+        type: choice
+        options: [none, patch, minor, major]
+        default: none
+      pre:
+        description: "Pre-release label, e.g. rc — empty for a final release"
+        type: string
+        default: ""
+      dry-run:
+        description: "Build and verify everything, publish nothing"
+        type: boolean
+        default: false
+
+# Read-only by default; the two jobs that need to write say so themselves.
+permissions:
+  contents: read
+
+# One release at a time, and never cancelled half way: an interrupted publish
+# is the one thing this workflow must not risk.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  # -------------------------------------------------------------------------
+  # Is there a release to make, and is this tree fit to make one?
+  # -------------------------------------------------------------------------
+  plan:
+    name: Plan
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write        # only the "bump" path below uses this
+    outputs:
+      release: ${{ steps.decide.outputs.release }}
+      version: ${{ steps.decide.outputs.version }}
+      tag: ${{ steps.decide.outputs.tag }}
+      sha: ${{ steps.decide.outputs.sha }}
+      prerelease: ${{ steps.decide.outputs.prerelease }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Tags, and all of them: "has this version been released already?"
+          # cannot be answered from a shallow clone.
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Raise the version
+        if: github.event_name == 'workflow_dispatch' && inputs.bump != 'none'
+        env:
+          # Through the environment, never interpolated into the script: an
+          # input is untrusted text, and ${{ }} inside a run: block would let
+          # it become shell.
+          BUMP: ${{ inputs.bump }}
+          PRE: ${{ inputs.pre }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+          # The bump writes a commit and pushes it, so it belongs on the branch
+          # releases are cut from.  Dispatching from a feature branch by
+          # accident would otherwise publish that branch.
+          if [ "$GITHUB_REF_NAME" != "$DEFAULT_BRANCH" ]; then
+            echo "::error::a bump may only be run on ${DEFAULT_BRANCH}," \
+                 "and this was dispatched on ${GITHUB_REF_NAME}"
+            exit 1
+          fi
+          if [ -n "$PRE" ]; then
+            python3 tools/release.py bump "$BUMP" --pre "$PRE"
+          else
+            python3 tools/release.py bump "$BUMP"
+          fi
+          version="$(python3 tools/release.py current)"
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -am "Release ${version}"
+          # A push made with GITHUB_TOKEN does not start another workflow run,
+          # which is exactly what is wanted here: this run carries on to
+          # publish the commit it has just made, rather than racing a second
+          # copy of itself.
+          git push origin HEAD:"${GITHUB_REF_NAME}"
+
+      - name: Decide
+        id: decide
+        run: |
+          set -euo pipefail
+          version="$(python3 tools/release.py current)"
+          tag="v${version}"
+          sha="$(git rev-parse HEAD)"
+          prerelease="$(python3 tools/release.py current --json |
+            python3 -c 'import json,sys; print(str(json.load(sys.stdin)["prerelease"]).lower())')"
+
+          if git rev-parse -q --verify "refs/tags/${tag}" >/dev/null; then
+            release=false
+            reason="${tag} already exists — nothing to release."
+          else
+            release=true
+            reason="${version} has no tag yet — this push will be released as ${tag}."
+          fi
+
+          {
+            echo "release=${release}"
+            echo "version=${version}"
+            echo "tag=${tag}"
+            echo "sha=${sha}"
+            echo "prerelease=${prerelease}"
+          } >> "$GITHUB_OUTPUT"
+
+          {
+            echo "### LinRAR ${version}"
+            echo
+            echo "${reason}"
+            echo
+            echo "| | |"
+            echo "|---|---|"
+            echo "| version | \`${version}\` |"
+            echo "| tag | \`${tag}\` |"
+            echo "| commit | \`${sha}\` |"
+            echo "| pre-release | ${prerelease} |"
+            echo "| dry run | ${{ inputs.dry-run == true }} |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Check the tree is releasable
+        if: steps.decide.outputs.release == 'true'
+        run: python3 tools/release.py check
+
+  # -------------------------------------------------------------------------
+  # The whole suite, unchanged, as the gate.
+  # -------------------------------------------------------------------------
+  verify:
+    name: Verify
+    needs: plan
+    if: needs.plan.outputs.release == 'true'
+    uses: ./.github/workflows/tests.yml
+
+  # -------------------------------------------------------------------------
+  # Build, prove, publish.
+  # -------------------------------------------------------------------------
+  publish:
+    name: Publish
+    needs: [plan, verify]
+    if: needs.plan.outputs.release == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write        # creates the tag and the release
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The exact commit the plan looked at — main may have moved on, and
+          # a release must be of the thing that was tested.
+          ref: ${{ needs.plan.outputs.sha }}
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Build the artifacts
+        run: tools/package.sh
+
+      - name: Write the release notes
+        env:
+          VERSION: ${{ needs.plan.outputs.version }}
+        run: |
+          set -euo pipefail
+          # Outside dist/, because everything in dist/ becomes a release asset.
+          python3 tools/release.py notes "$VERSION" > "${RUNNER_TEMP}/NOTES.md"
+          {
+            echo
+            echo "---"
+            echo
+            echo "**Install**"
+            echo
+            echo '```bash'
+            echo "tar xf linrar-${VERSION}.tar.gz"
+            echo "cd linrar-${VERSION}"
+            echo "./install.sh"
+            echo '```'
+            echo
+            echo "Verify the download first with"
+            echo "\`sha256sum -c SHA256SUMS\`."
+          } >> "${RUNNER_TEMP}/NOTES.md"
+
+      - name: Write the update manifest
+        env:
+          VERSION: ${{ needs.plan.outputs.version }}
+          COMMIT: ${{ needs.plan.outputs.sha }}
+        run: |
+          set -euo pipefail
+          python3 tools/release.py manifest \
+            --dir dist --version "$VERSION" --commit "$COMMIT"
+          # It is the file an updater trusts, so read it back and prove it
+          # parses and points at things that are really there.
+          python3 - <<'PY'
+          import json, os, hashlib, sys
+          manifest = json.load(open("dist/latest.json"))
+          assert manifest["version"] == os.environ["VERSION"], manifest["version"]
+          assert manifest["commit"] == os.environ["COMMIT"], manifest["commit"]
+          assert manifest["artifacts"], "the manifest lists no artifacts"
+          for artifact in manifest["artifacts"]:
+              path = os.path.join("dist", artifact["name"])
+              digest = hashlib.sha256(open(path, "rb").read()).hexdigest()
+              assert digest == artifact["sha256"], artifact["name"]
+              assert artifact["url"].endswith("/" + artifact["name"]), artifact["url"]
+          print(f"manifest ok: {manifest['version']}, "
+                f"{len(manifest['artifacts'])} artifact(s)")
+          PY
+
+      - name: Keep the artifacts on the run as well
+        uses: actions/upload-artifact@v4
+        with:
+          name: linrar-${{ needs.plan.outputs.version }}
+          path: dist/
+          retention-days: 30
+          if-no-files-found: error
+
+      - name: Publish the release
+        if: inputs.dry-run != true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.plan.outputs.version }}
+          TAG: ${{ needs.plan.outputs.tag }}
+          COMMIT: ${{ needs.plan.outputs.sha }}
+          PRERELEASE: ${{ needs.plan.outputs.prerelease }}
+        run: |
+          set -euo pipefail
+          # A plain string rather than an array: an empty array under `set -u`
+          # is a trap on older bash, and `x && y` as a whole command is one
+          # under `set -e` the moment x is false.
+          PRE_FLAG=""
+          if [ "$PRERELEASE" = "true" ]; then
+            PRE_FLAG="--prerelease"
+          fi
+          # --target creates the tag as part of creating the release, so there
+          # is never a tag pointing at a release that does not exist, and a run
+          # that failed half way can simply be run again.
+          # shellcheck disable=SC2086  # $PRE_FLAG is meant to vanish when empty
+          gh release create "$TAG" dist/* \
+            --title "LinRAR ${VERSION}" \
+            --notes-file "${RUNNER_TEMP}/NOTES.md" \
+            --target "$COMMIT" \
+            $PRE_FLAG
+          {
+            echo
+            echo "Published **[LinRAR ${VERSION}](${{ github.server_url }}/${{ github.repository }}/releases/tag/${TAG})**"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Say what a dry run would have done
+        if: inputs.dry-run == true
+        env:
+          TAG: ${{ needs.plan.outputs.tag }}
+        run: |
+          {
+            echo
+            echo "Dry run: **${TAG}** was built and verified but not published."
+            echo "The artifacts are attached to this run."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # -------------------------------------------------------------------------
+  # Why nothing happened, said out loud rather than left as a skipped job.
+  # -------------------------------------------------------------------------
+  nothing-to-do:
+    name: No release
+    needs: plan
+    if: needs.plan.outputs.release != 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Explain
+        env:
+          VERSION: ${{ needs.plan.outputs.version }}
+          TAG: ${{ needs.plan.outputs.tag }}
+        run: |
+          {
+            echo
+            echo "\`${TAG}\` is already published, so this push changed code "
+            echo "without changing the version — which is the normal case."
+            echo
+            echo "To release what is on main now:"
+            echo
+            echo '```bash'
+            echo "tools/release.py bump patch     # or minor, or major"
+            echo "git commit -am \"Release \$(tools/release.py current)\""
+            echo "git push"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

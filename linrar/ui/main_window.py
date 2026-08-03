@@ -45,7 +45,7 @@ from ..core.models import (
 )
 from ..core import sfx
 from ..core.profiles import PROFILES, Profile
-from ..core import diagnose, elevation, packages
+from ..core import diagnose, elevation, filetypes, packages
 from ..core.registry import (
     REGISTRY,
     detect_format,
@@ -61,7 +61,7 @@ from .dialogs.convert import ConvertDialog
 from .dialogs.customize import CustomizeDialog
 from .dialogs.dependencies import DependenciesDialog
 from .dialogs.extract import ExtractDialog
-from .dialogs.sfx import SfxDialog
+from .dialogs.sfx import SfxDialog, SfxKindDialog
 from .dialogs.tools import (
     FavoritesDialog,
     PasswordManagerDialog,
@@ -125,6 +125,7 @@ TOOLBAR_CATALOGUE: list[tuple[str, str, str]] = [
     ("settings", "act_settings", "Settings"),
     ("customize", "act_customize", "Customize"),
     ("help", "act_help_topics", "Help"),
+    ("update", "act_check_updates", "Update"),
     ("theme", "act_toggle_theme", "Theme"),
 ]
 
@@ -291,6 +292,10 @@ class MainWindow(QMainWindow):
         )
         self.act_shortcuts = self._act(
             "&Keyboard shortcuts", "", "Shift+F1", self.cmd_shortcuts
+        )
+        self.act_check_updates = self._act(
+            "Check for &updates...", "download", "", self.cmd_check_updates,
+            "See whether a newer version of LinRAR has been released",
         )
         self.act_lock = self._act(
             "&Lock archive", "lock", "", self.cmd_lock,
@@ -636,6 +641,7 @@ class MainWindow(QMainWindow):
         help_menu.addAction(self.act_help_topics)
         help_menu.addAction(self.act_shortcuts)
         help_menu.addSeparator()
+        help_menu.addAction(self.act_check_updates)
         help_menu.addAction(self.act_about)
 
         # The theme switch lives in the menu bar's corner: always in the same
@@ -1012,22 +1018,22 @@ class MainWindow(QMainWindow):
         )
         return False
 
-    def open_archive(self, path: str, password: Optional[str] = None) -> bool:
-        """Enter an archive, explaining clearly whenever that is not possible.
+    def read_archive(
+        self, path: str, password: Optional[str] = None, announce: bool = True
+    ) -> Optional[tuple]:
+        """Read an archive's listing without disturbing the window.
 
-        Every way this can fail (a file that vanished, one that is not an
-        archive at all, a volume opened out of order, a format whose tool is
-        not installed, a damaged download) is diagnosed and reported with
-        what LinRAR actually found, rather than passed through as the archive
-        tool's own "cannot open".
+        Returns ``(backend, info, password, path)`` — *path* may differ from
+        the one asked for, because a later volume of a split set is answered
+        with the volume that carries the index.  ``None`` means it could not
+        be read, and the reason has already been put on screen.
+
+        This is the half of opening an archive that every operation needs;
+        :meth:`open_archive` adds the half that changes what is on screen, and
+        extracting deliberately does not.
         """
         path = os.path.abspath(os.path.expanduser(path))
         facts = diagnose.inspect_path(path)
-
-        # Handed a folder (from the command line, a favourite, or the address
-        # bar): browse it instead of complaining about it.
-        if facts.kind == "directory":
-            return self.navigate_to(path)
         if (
             not facts.exists
             or facts.kind != "file"
@@ -1035,26 +1041,26 @@ class MainWindow(QMainWindow):
             or facts.size == 0
         ):
             self.report_path(path)
-            return False
+            return None
 
-        # A later part of a split archive holds no index, so opening it shows
-        # a misleading fragment.  When the first volume is right there, open
-        # that instead, quietly, with a note, rather than as an error.
+        # A later part of a split archive holds no index, so using it directly
+        # gives a misleading fragment.  When the first volume is right there,
+        # work from that instead, with a note rather than an error.
         if facts.volume > 1 and facts.first_volume:
-            opened = self.open_archive(facts.first_volume, password)
-            if opened:
+            if announce:
                 self.statusBar().showMessage(
                     f"{os.path.basename(path)} is part {facts.volume} of a set "
-                    f"— opened {os.path.basename(facts.first_volume)} instead",
+                    f"— using {os.path.basename(facts.first_volume)} instead",
                     8000,
                 )
-            return opened
+            path = facts.first_volume
+            facts = diagnose.inspect_path(path)
 
         try:
             backend, fmt = REGISTRY.for_path(path)
         except OperationError as exc:
             self.report_path(path, exc)
-            return False
+            return None
 
         # A default password set for the session is tried before the user is
         # asked for one again.
@@ -1066,11 +1072,11 @@ class MainWindow(QMainWindow):
             except PasswordRequired:
                 result = PasswordDialog.ask(self, os.path.basename(path))
                 if result is None:
-                    return False
+                    return None
                 attempt_password = result[0] or None
             except OperationError as exc:
                 self.report_path(path, exc)
-                return False
+                return None
 
         # A backend that returns nothing at all for a file whose contents say
         # it is not an archive has refused it, whatever its exit status said.
@@ -1078,14 +1084,7 @@ class MainWindow(QMainWindow):
         # gets mistaken for a bug in LinRAR.
         if not info.entries and facts.mislabelled:
             self.report_path(path)
-            return False
-
-        # Stepping into an archive is a navigation too: Back leaves it again.
-        if not self.in_archive and self.current_folder:
-            self._remember_cursor()
-            self._back.append(self.current_folder)
-            del self._back[:-_HISTORY_DEPTH]
-            self._forward.clear()
+            return None
 
         # The backend's own idea of the format usually wins, but 7-Zip calls a
         # .deb an "Ar" archive — true, and less useful than what the signature
@@ -1094,6 +1093,35 @@ class MainWindow(QMainWindow):
             info.format is ArchiveFormat.AR and fmt is ArchiveFormat.DEB
         ):
             info.format = fmt
+        return backend, info, attempt_password, path
+
+    def open_archive(self, path: str, password: Optional[str] = None) -> bool:
+        """Enter an archive, explaining clearly whenever that is not possible.
+
+        Every way this can fail (a file that vanished, one that is not an
+        archive at all, a volume opened out of order, a format whose tool is
+        not installed, a damaged download) is diagnosed and reported with
+        what LinRAR actually found, rather than passed through as the archive
+        tool's own "cannot open".
+        """
+        path = os.path.abspath(os.path.expanduser(path))
+        # Handed a folder (from the command line, a favourite, or the address
+        # bar): browse it instead of complaining about it.
+        if os.path.isdir(path):
+            return self.navigate_to(path)
+
+        result = self.read_archive(path, password)
+        if result is None:
+            return False
+        _backend, info, attempt_password, path = result
+
+        # Stepping into an archive is a navigation too: Back leaves it again.
+        if not self.in_archive and self.current_folder:
+            self._remember_cursor()
+            self._back.append(self.current_folder)
+            del self._back[:-_HISTORY_DEPTH]
+            self._forward.clear()
+
         self.archive_path = path
         self.archive_info = info
         self.archive_folder = ""
@@ -1347,7 +1375,13 @@ class MainWindow(QMainWindow):
 
     def _update_status(self) -> None:
         selected = self.list_view.selected_items()
-        if selected:
+        if len(selected) == 1 and not selected[0].is_dir:
+            # One file: name what it is, which is more use than counting to one.
+            item = selected[0]
+            self.selection_label.setText(
+                f"{item.type_name}  ·  {format_size(item.size)} bytes"
+            )
+        elif selected:
             files = [i for i in selected if not i.is_dir]
             total = sum(i.size for i in files)
             self.selection_label.setText(
@@ -1426,6 +1460,12 @@ class MainWindow(QMainWindow):
             return
         if item.is_dir:
             self.navigate_to(item.path)
+        elif filetypes.is_document_container(item.name):
+            # A .docx really is a ZIP archive, and LinRAR will open it as one
+            # when asked -- but double-clicking a document asks for the word
+            # processor, not for a listing of word/document.xml.  The right
+            # click menu offers the other reading.
+            self._open_externally(item.path)
         elif looks_like_archive(item.name) or detect_format(item.path) is not (
             ArchiveFormat.UNKNOWN
         ):
@@ -1486,6 +1526,22 @@ class MainWindow(QMainWindow):
                 open_action.triggered.connect(
                     lambda: self.navigate_to(selected[0].path)
                 )
+            elif len(selected) == 1 and filetypes.is_document_container(
+                selected[0].name
+            ):
+                # Both readings of the same file, in the order they are wanted:
+                # the document first, the ZIP it is stored in second.
+                target = selected[0].path
+                described = filetypes.by_name(selected[0].name).label
+                external = menu.addAction(f"Open {described.lower()}")
+                external.triggered.connect(lambda: self._open_externally(target))
+                inspect = menu.addAction(icons.icon("view"), "View in LinRAR")
+                inspect.triggered.connect(lambda: self._view_disk_file(target))
+                as_archive = menu.addAction(
+                    icons.icon("archive-small"), "Open as archive"
+                )
+                as_archive.triggered.connect(lambda: self.open_archive(target))
+                menu.addAction(self.act_extract_to)
             elif len(selected) == 1 and looks_like_archive(selected[0].name):
                 open_action = menu.addAction(icons.icon("archive-small"), "Open archive")
                 open_action.triggered.connect(
@@ -1561,8 +1617,15 @@ class MainWindow(QMainWindow):
         title: str,
         total_bytes: int = 0,
         total_items: int = 0,
+        plan: Optional[dict] = None,
+        ratio_path: str = "",
     ) -> tuple[Optional[bool], object, Optional[OperationError]]:
         """Run *work* with a modal progress window.
+
+        *plan* maps each member to its size.  With it the overall bar is
+        weighted by bytes, which is what makes it move at a different rate
+        from the per-file bar above it; without it, all the operation can say
+        is how many members it has started.
 
         Returns ``(ok, result, error)``.  ``ok`` is ``None`` when the user sent
         the operation to the background — the task then finishes on its own and
@@ -1570,8 +1633,14 @@ class MainWindow(QMainWindow):
         """
         task = Task(work, title, self)
         task.ctx.total_items = total_items
+        if plan:
+            # Only with real sizes: a byte total with no per-member sizes
+            # would leave the overall bar pinned at zero.
+            task.ctx.plan(plan, total_bytes)
         self._task = task
         dialog = ProgressDialog(self, task, title, total_bytes)
+        if ratio_path:
+            dialog.watch_ratio(ratio_path)
         dialog.exec()
         if dialog.backgrounded and task.isRunning():
             self._adopt_background_task(task, title)
@@ -1618,6 +1687,7 @@ class MainWindow(QMainWindow):
         title: str,
         total_bytes: int = 0,
         total_items: int = 0,
+        plan: Optional[dict] = None,
     ) -> tuple[bool, object]:
         """Run an archive operation, prompting for a password as needed.
 
@@ -1627,7 +1697,7 @@ class MainWindow(QMainWindow):
         """
         while True:
             ok, result, error = self._run_task(
-                make_work(self.password), title, total_bytes, total_items
+                make_work(self.password), title, total_bytes, total_items, plan
             )
             if ok:
                 return True, result
@@ -1724,7 +1794,7 @@ class MainWindow(QMainWindow):
         )
         return False
 
-    def _view_disk_file(self, path: str, limit: int = 4 * 1024 * 1024) -> None:
+    def _view_disk_file(self, path: str, limit: int = 32 * 1024 * 1024) -> None:
         """Show a file from disk in LinRAR's own viewer."""
         try:
             with open(path, "rb") as handle:
@@ -1732,7 +1802,10 @@ class MainWindow(QMainWindow):
         except OSError as exc:
             self.report_path(path, OperationError(str(exc)))
             return
-        ViewerDialog(self, os.path.basename(path), data).exec()
+        viewer = ViewerDialog(self, os.path.basename(path), data, path)
+        viewer.exec()
+        if viewer.open_as_archive:
+            self.open_archive(path)
 
     def _backend_for_open_archive(self):
         if self.archive_path is None:
@@ -1803,10 +1876,11 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "LinRAR", exc.message)
             return
 
-        total, count = _total_bytes(files)
+        plan = _size_plan(files)
+        total = sum(plan.values())
         if options.sfx_format == sfx.APPIMAGE:
             self._create_appimage(
-                backend, files, options, dialog.sfx_options(), total, count
+                backend, files, options, dialog.sfx_options(), plan
             )
             return
 
@@ -1818,7 +1892,9 @@ class MainWindow(QMainWindow):
             work,
             f"Creating {os.path.basename(options.archive_path)}",
             total,
-            count,
+            len(plan),
+            plan=plan,
+            ratio_path=options.archive_path,
         )
         if not ok:
             if error is not None:
@@ -1837,8 +1913,7 @@ class MainWindow(QMainWindow):
         files: list[str],
         options: CompressOptions,
         sfx_options,
-        total: int,
-        count: int,
+        plan: Optional[dict] = None,
     ) -> None:
         """Compress, then wrap the result into a self-extracting AppImage.
 
@@ -1849,6 +1924,8 @@ class MainWindow(QMainWindow):
         target = options.archive_path
         if not self._confirm_appimage_runtime():
             return
+        if plan is None:
+            plan = _size_plan(files)
 
         staging = tempfile.mkdtemp(prefix="linrar-appimage-")
         self._temp_dirs.append(staging)
@@ -1860,13 +1937,18 @@ class MainWindow(QMainWindow):
         def work(ctx: TaskContext):
             backend.create(files, options, ctx)
             ctx.on_message("Building the self-extracting AppImage...")
+            # build_sfx_appimage restarts the bars for its own phase.
             return sfx.build_sfx_appimage(
                 options.archive_path, target, sfx_options, ctx,
                 allow_download=True,
             )
 
         ok, result, error = self._run_task(
-            work, f"Creating {os.path.basename(target)}", total, count
+            work,
+            f"Creating {os.path.basename(target)}",
+            sum(plan.values()),
+            len(plan),
+            plan=plan,
         )
         shutil.rmtree(staging, ignore_errors=True)
         if staging in self._temp_dirs:
@@ -1951,53 +2033,84 @@ class MainWindow(QMainWindow):
     # -- entry points for the file manager's right-click menu --------------
 
     def extract_paths(self, paths: list[str], ask_options: bool) -> None:
-        """Unpack each archive in *paths*, one after the other."""
-        opened = 0
+        """Unpack each archive in *paths*, one after the other.
+
+        The window is left exactly as it was.  WinRAR's *Extract here* never
+        navigates anywhere — it puts a progress box on screen and gets on with
+        it — and opening each archive in the browser first was both slower and
+        a surprise, since it left the user somewhere they did not ask to be.
+        """
+        done = 0
         for path in paths:
-            if not self.open_archive(path):
-                continue
-            opened += 1
-            self.list_view.selectionModel().clearSelection()
-            self._extract(ask_options=ask_options)
-        if opened == 0 and not paths:
-            QMessageBox.information(
-                self, "LinRAR", "There was nothing to extract."
+            if self.extract_archive(path, ask_options):
+                done += 1
+        if paths and not self.in_archive:
+            # New files may have appeared in the folder on screen.
+            self._populate_filesystem(self._current_name())
+        if done and len(paths) > 1:
+            self.statusBar().showMessage(
+                f"Extracted {done} of {len(paths)} archives", 6000
             )
 
+    def extract_archive(self, path: str, ask_options: bool) -> bool:
+        """Extract one whole archive without opening it in the window."""
+        result = self.read_archive(path)
+        if result is None:
+            return False
+        backend, info, password, path = result
+        return self._extract_from(backend, info, path, password, [], ask_options)
+
     def test_paths(self, paths: list[str]) -> None:
+        """Check each archive, again without opening any of them."""
         for path in paths:
-            if self.open_archive(path):
-                self.cmd_test()
+            result = self.read_archive(path)
+            if result is None:
+                continue
+            backend, info, password, path = result
+            self._test_archive(backend, info, path, password)
 
     def _extract(self, ask_options: bool) -> None:
+        """Extract from the archive open in the window, honouring the selection."""
         info = self.archive_info
         backend = self._backend_for_open_archive()
         if info is None or backend is None or self.archive_path is None:
             return
+        members = self._expand_selection(self.list_view.selected_items())
+        self._extract_from(
+            backend, info, self.archive_path, self.password, members, ask_options
+        )
 
-        selected = self.list_view.selected_items()
-        members = self._expand_selection(selected)
-        default_dir = os.path.dirname(self.archive_path)
+    def _extract_from(
+        self,
+        backend,
+        info: ArchiveInfo,
+        archive_path: str,
+        password: Optional[str],
+        members: list[str],
+        ask_options: bool,
+    ) -> bool:
+        """The one extraction path, whether or not the archive is on screen."""
+        default_dir = os.path.dirname(archive_path)
 
         if ask_options:
             dialog = ExtractDialog(
                 self,
-                archive_name=self.archive_path,
+                archive_name=archive_path,
                 destination=SETTINGS.get("places/extract_folder") or default_dir,
                 members=members,
-                password=self.password,
+                password=password,
             )
             if dialog.exec() != ExtractDialog.DialogCode.Accepted:
-                return
+                return False
             options = dialog.options()
             if dialog.extract_to_subfolders:
-                stem = _archive_stem(self.archive_path)
+                stem = _archive_stem(archive_path)
                 options.destination = os.path.join(options.destination, stem)
         else:
             options = ExtractOptions(
                 destination=default_dir,
                 members=members,
-                password=self.password,
+                password=password,
                 overwrite_mode=OverwriteMode.ASK,
             )
 
@@ -2006,21 +2119,20 @@ class MainWindow(QMainWindow):
 
         resolved = self._resolve_overwrites(info, options)
         if resolved is None:
-            return
+            return False
         options = resolved
 
         # A destination the user cannot write is not a dead end: offer to
         # finish the job with administrator rights instead.
         deploy = self._prepare_destination(options)
         if deploy is False:
-            return
+            return False
 
-        total = _entries_bytes(info, options.members)
-        item_count = len(options.members) or info.file_count
-        archive_path = self.archive_path
+        plan = _member_plan(info, options.members)
+        total = sum(plan.values())
 
-        def make_work(password: Optional[str]):
-            options.password = password
+        def make_work(password_attempt: Optional[str]):
+            options.password = password_attempt
 
             def work(ctx: TaskContext):
                 backend.extract(archive_path, options, ctx)
@@ -2032,20 +2144,22 @@ class MainWindow(QMainWindow):
             make_work,
             f"Extracting from {os.path.basename(archive_path)}",
             total,
-            item_count,
+            len(plan),
+            plan=plan,
         )
         if not ok:
-            return
+            return False
 
         final = options.destination
         if deploy is not None:
             if not self._deploy_elevated(deploy, options.overwrite_mode):
-                return
+                return False
             final = deploy[1]
 
         self.statusBar().showMessage(f"Extracted to {final}", 6000)
         if options.open_when_done:
             QDesktopServices.openUrl(QUrl.fromLocalFile(final))
+        return True
 
     # -- writing where the user cannot ------------------------------------
 
@@ -2211,26 +2325,42 @@ class MainWindow(QMainWindow):
 
     def cmd_test(self) -> None:
         backend = self._backend_for_open_archive()
-        if backend is None or self.archive_path is None:
+        if backend is None or self.archive_path is None or self.archive_info is None:
             return
-        archive_path = self.archive_path
+        self._test_archive(
+            backend, self.archive_info, self.archive_path, self.password
+        )
 
-        def make_work(password: Optional[str]):
+    def _test_archive(
+        self,
+        backend,
+        info: ArchiveInfo,
+        archive_path: str,
+        password: Optional[str],
+    ) -> bool:
+        def make_work(password_attempt: Optional[str]):
             def work(ctx: TaskContext):
-                backend.test(archive_path, password, ctx)
+                backend.test(archive_path, password_attempt, ctx)
                 return True
 
             return work
 
-        total = self.archive_info.total_size if self.archive_info else 0
-        count = self.archive_info.file_count if self.archive_info else 0
+        plan = _member_plan(info, [])
         ok, _result = self._run_with_password(
-            make_work, f"Testing {os.path.basename(archive_path)}", total, count
+            make_work,
+            f"Testing {os.path.basename(archive_path)}",
+            sum(plan.values()),
+            len(plan),
+            plan=plan,
         )
         if ok:
             QMessageBox.information(
-                self, "LinRAR", "All files tested successfully. No errors found."
+                self,
+                "LinRAR",
+                f"{os.path.basename(archive_path)}\n\n"
+                f"All {len(plan)} file(s) tested successfully. No errors found.",
             )
+        return ok
 
     def cmd_view(self) -> None:
         selected = [i for i in self.list_view.selected_items() if not i.is_dir]
@@ -2290,7 +2420,12 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "LinRAR", f"Cannot read the file.\n\n{exc}")
             return
 
-        ViewerDialog(self, item.name, data).exec()
+        # The extracted copy goes with it: that is what lets the viewer hand
+        # the member to the application that owns it, or open a nested archive.
+        viewer = ViewerDialog(self, item.name, data, extracted)
+        viewer.exec()
+        if viewer.open_as_archive:
+            self.open_archive(extracted)
 
     def cmd_delete(self) -> None:
         selected = self.list_view.selected_items()
@@ -2584,11 +2719,18 @@ class MainWindow(QMainWindow):
             )
             return
 
+        # Which kind first, then its options -- and the stub has none, so it
+        # goes straight to the converter rather than through a window with
+        # every page greyed out.
+        chooser = SfxKindDialog(self, archive_path=source)
+        if chooser.exec() != SfxKindDialog.DialogCode.Accepted:
+            return
+        if chooser.chosen == sfx.RAR_STUB:
+            self._convert_to_stub(source)
+            return
+
         dialog = SfxDialog(self, archive_path=source)
         if dialog.exec() != SfxDialog.DialogCode.Accepted:
-            return
-        if dialog.sfx_format == sfx.RAR_STUB:
-            self._convert_to_stub(source)
             return
         self._convert_to_appimage(source, dialog.options())
 
@@ -2740,20 +2882,27 @@ class MainWindow(QMainWindow):
         options = CompressOptions(
             archive_path=archive, format=fmt, base_folder=base
         )
-        total, count = _total_bytes(files)
+        plan = _size_plan(files)
 
         def work(ctx: TaskContext):
             backend.create(files, options, ctx)
             return archive
 
         ok, _r, error = self._run_task(
-            work, f"Adding to {os.path.basename(archive)}", total, count
+            work,
+            f"Adding to {os.path.basename(archive)}",
+            sum(plan.values()),
+            len(plan),
+            plan=plan,
+            ratio_path=archive,
         )
         if not ok:
             if error is not None:
                 self._report(error)
             return
-        self.statusBar().showMessage(f"Added {count} file(s) to {archive}", 5000)
+        self.statusBar().showMessage(
+            f"Added {len(plan)} file(s) to {archive}", 5000
+        )
 
     # -- selection ---------------------------------------------------------
 
@@ -3365,6 +3514,34 @@ class MainWindow(QMainWindow):
         self._update_actions()
         self.update_dependency_state()
 
+    def cmd_check_updates(self) -> None:
+        """Help > Check for updates, asked for deliberately.
+
+        Imported here rather than at the top of the module: the updater pulls
+        in the network stack, and a session that never asks for an update
+        should never pay for it.
+        """
+        from .dialogs.update import open_updater
+
+        open_updater(self)
+
+    def start_update_check(self) -> None:
+        """The quiet check at start-up, when the user has asked for one."""
+        # The settings are read before the import, not after: pulling in the
+        # updater costs every launch the network stack, and a session with
+        # update checks switched off should never load it at all.
+        if not (SETTINGS.get("update/check_on_start")
+                or SETTINGS.get("update/automatic")):
+            return
+        from .dialogs.update import StartupCheck
+
+        if not StartupCheck.wanted():
+            return
+        # Kept on the window: a check scheduled on a timer must outlive the
+        # call that scheduled it.
+        self._startup_check = StartupCheck(self)
+        self._startup_check.schedule()
+
     def cmd_about(self) -> None:
         AboutDialog(self).exec()
 
@@ -3532,33 +3709,38 @@ class MainWindow(QMainWindow):
         super().closeEvent(event)
 
 
-def _total_bytes(paths: list[str]) -> tuple[int, int]:
-    """Return ``(total_bytes, file_count)`` for a selection, walking folders."""
-    total = 0
-    count = 0
+def _size_plan(paths: list[str]) -> dict[str, int]:
+    """Every file a selection covers, with its size, folders walked."""
+    plan: dict[str, int] = {}
     for item in paths:
         if os.path.isdir(item):
             for root, _dirs, names in os.walk(item):
                 for name in names:
-                    count += 1
+                    full = os.path.join(root, name)
                     try:
-                        total += os.path.getsize(os.path.join(root, name))
+                        plan[full] = os.path.getsize(full)
                     except OSError:
-                        pass
+                        plan[full] = 0
         else:
-            count += 1
             try:
-                total += os.path.getsize(item)
+                plan[item] = os.path.getsize(item)
             except OSError:
-                pass
-    return total, count
+                plan[item] = 0
+    return plan
 
 
-def _entries_bytes(info: ArchiveInfo, members: list[str]) -> int:
-    if not members:
-        return info.total_size
-    wanted = set(members)
-    return sum(e.size for e in info.entries if not e.is_dir and e.name in wanted)
+def _member_plan(info: ArchiveInfo, members: list[str]) -> dict[str, int]:
+    """The members an operation will touch, with their unpacked sizes.
+
+    An empty *members* list means the whole archive, which is what "extract
+    with nothing selected" and "test" both mean.
+    """
+    wanted = set(members) if members else None
+    return {
+        entry.name: entry.size
+        for entry in info.entries
+        if not entry.is_dir and (wanted is None or entry.name in wanted)
+    }
 
 
 def _unique_path(target: str) -> str:

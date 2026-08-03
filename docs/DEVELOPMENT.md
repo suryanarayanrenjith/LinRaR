@@ -77,6 +77,7 @@ linrar/          the application (core/ has no PyQt widget imports)
 tests/           standalone test scripts + run_all.py
 docs/            this documentation, with images/ for the screenshots
 assets/          linrar.svg and a reference copy of the .desktop entry
+tools/           release.py (version + CHANGELOG) and package.sh (artifacts)
 install.sh       everything that touches the desktop
 uninstall.sh     reverses it from .install-manifest
 run.sh           launch from the source tree
@@ -111,9 +112,40 @@ open('assets/linrar.svg', 'w').write(icons.svg('app'))"
 
 ## Releasing
 
-1. Update [CHANGELOG.md](../CHANGELOG.md) and `APP_VERSION` in
-   `linrar/ui/dialogs/misc.py`.
-2. `python3 tests/run_all.py` — everything green.
-3. `./uninstall.sh -y && ./install.sh -y` on a clean machine or container, and
-   confirm the app opens from the application menu.
-4. Tag the commit.
+Write the change up under `## Unreleased` in
+[CHANGELOG.md](../CHANGELOG.md) as you go — that section *is* the release
+notes — and when it is time to publish:
+
+```bash
+tools/release.py bump patch          # or minor, major, or an exact 3.0.0
+git commit -am "Release $(tools/release.py current)"
+git push
+```
+
+That is the whole thing. `bump` rewrites `__version__` in
+[linrar/version.py](../linrar/version.py) and moves the `## Unreleased` section
+under the new number and today's date, so the two can never disagree; pushing a
+version that has no tag is what
+[.github/workflows/release.yml](../.github/workflows/release.yml) takes as the
+instruction to publish. It runs the full suite, builds the tarball, checks that
+the tarball unpacks and reports the right version, writes the update manifest,
+and creates the tag and the GitHub release together.
+
+A push that does *not* change the version is never mistaken for a release.
+
+```bash
+tools/release.py check      # would this tree release cleanly?
+tools/release.py notes      # what the notes would say
+tools/package.sh            # build the artifacts locally, into dist/
+```
+
+**Actions → release → Run workflow** does the bump commit for you, takes a
+pre-release label (`rc`), and has a dry-run box that builds and verifies
+everything without publishing.
+
+Before a major release it is still worth doing by hand what CI cannot:
+`./uninstall.sh -y && ./install.sh -y` on a clean machine or container, and
+confirming the app opens from the application menu.
+
+The numbering, the build stamp, the manifest and how an updater should read all
+three are set out in [VERSIONING.md](VERSIONING.md).

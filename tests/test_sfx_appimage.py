@@ -89,7 +89,6 @@ window._create_appimage(
     CompressOptions(archive_path=direct, format=ArchiveFormat.RAR5,
                     base_folder=src, sfx_format=sfx.APPIMAGE),
     sfx.SfxOptions(title="Direct", ask_destination=False, default_path=""),
-    100, 1,
 )
 check("add-to-archive builds an AppImage in one step",
       os.path.isfile(direct) and os.access(direct, os.X_OK), direct)

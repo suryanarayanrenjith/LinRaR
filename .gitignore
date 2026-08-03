@@ -4,7 +4,13 @@
 .venv/
 venv/
 .install-manifest
+.install-manifest.tmp
 .install-receipt
+
+# The build stamp tools/package.sh writes into a release artifact (commit,
+# date, tag).  It says "this copy was published"; a working tree never was, so
+# committing it would make every clone claim to be a release.
+linrar/_build.py
 
 # --- Python ---------------------------------------------------------------
 __pycache__/

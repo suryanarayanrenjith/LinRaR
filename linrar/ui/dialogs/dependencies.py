@@ -249,13 +249,22 @@ class DependenciesDialog(QDialog):
         for status in packages.all_statuses():
             dependency = status.dependency
             names = dependency.packages_for(self.manager)
+            # A tool nobody builds for this machine is not "Missing": missing
+            # implies it could be fetched, and offering that would be a lie.
+            buildable = dependency.available_here()
+            if status.installed:
+                state = "Installed"
+            elif not buildable:
+                state = "Not available here"
+            elif dependency.essential:
+                state = "Missing"
+            else:
+                state = "Not installed"
             item = QTreeWidgetItem(
                 self.table,
                 [
                     dependency.name,
-                    "Installed" if status.installed else (
-                        "Missing" if dependency.essential else "Not installed"
-                    ),
+                    state,
                     status.version or ("-" if status.installed else ""),
                     " ".join(names) if names else "-",
                     status.path or "",
@@ -265,6 +274,8 @@ class DependenciesDialog(QDialog):
             item.setIcon(0, icons.icon("package"))
             if status.installed:
                 item.setForeground(1, QColor(theme.current().ok))
+            elif not buildable:
+                item.setForeground(1, QColor(theme.current().text_dim))
             elif dependency.essential:
                 item.setForeground(1, QColor(theme.current().error))
             else:
@@ -301,16 +312,21 @@ class DependenciesDialog(QDialog):
 
         dependency = status.dependency
         text = dependency.description
+        unavailable = dependency.unavailable_reason()
+        if unavailable:
+            text += f"\n\n{unavailable}"
         if note := dependency.note_for(self.manager):
             text += f"\n\nNote: {note}"
-        if not dependency.packages_for(self.manager) and self.manager is not None:
+        if (not unavailable and not dependency.packages_for(self.manager)
+                and self.manager is not None):
             text += (
                 f"\n\nThis component has no package for "
                 f"{self.manager.label} and must be installed manually."
             )
         self.detail_label.setText(text)
 
-        can_manage = bool(dependency.packages_for(self.manager))
+        can_manage = (bool(dependency.packages_for(self.manager))
+                      and not unavailable)
         self.install_button.setEnabled(can_manage and not status.installed)
         self.remove_button.setEnabled(can_manage and status.installed)
 

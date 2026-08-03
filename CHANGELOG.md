@@ -4,6 +4,41 @@ All notable changes to LinRAR, newest first.
 
 ## Unreleased
 
+### Extracting behaves the way WinRAR's does
+
+- **Extracting no longer opens the archive in the background.** Unpacking from
+  the file list, the right-click menu or the command line used to step the
+  browser into the archive first, leaving the user somewhere they had not
+  asked to be. The window now stays exactly where it is — same folder, same
+  title, same Back history — and the listing refreshes when the files arrive.
+  Testing an archive from outside behaves the same way.
+- Extracting several selected archives runs them one after another and reports
+  how many succeeded, instead of leaving the browser inside the last one.
+
+### The progress window
+
+- **The two bars finally mean two different things.** The lower bar is now
+  weighted by **bytes**, as WinRAR's is: thirty small files followed by one
+  large one no longer reads as "almost finished" after the small ones. It was
+  previously derived from the file count, and fell back to *copying the
+  per-file percentage outright* whenever the count was unknown — which is why
+  both bars moved in lock step.
+- **More detail, WinRAR's set:** elapsed time, time left, bytes processed of
+  the total, the file count (`14 of 38`), current speed, and the live
+  compression figure while an archive is being written. The bars are captioned
+  *Current file* and *Total*, and the percentage is in the window title so the
+  taskbar carries it.
+- **Fixed: the file being worked on was named one file late.** rar rewrites a
+  single terminal line per member, so the name was only read from the finished
+  line; the live line is now parsed too, and the counters advance when a file
+  starts rather than when it ends.
+- **Fixed: `Extracting from backup.rar` was counted as a member** called "from
+  backup.rar", and a percentage or `OK` printed tight against a long file name
+  was read as part of the name. Both threw the file count and the byte
+  accounting off.
+- Building a self-extracting AppImage restarts the bars for the wrapping
+  phase, rather than leaving them at 100% while work continues.
+
 ### Self-extracting archives, in one step
 
 - **The Add dialog makes AppImages.** *Create SFX archive* now has the kind
@@ -145,6 +180,158 @@ All notable changes to LinRAR, newest first.
   copied into the data directory so a `--system` install is recognised from a
   fresh clone. An install made before receipts existed is still detected, from
   the launcher.
+
+### An icon for every kind of file
+
+- **The file list draws what a file is**, instead of giving everything that is
+  not an archive the same blank page. Fifteen new icons — Word, Excel,
+  PowerPoint, PDF, OpenDocument and EPUB, images, audio, video, source code,
+  fonts, programs, databases, disc images and keys — drawn in the same style as
+  the rest of the set, as a sheet with a coloured band across its foot, because
+  at sixteen pixels the colour is what the eye reads.
+- **Every file is identified now.** A file with no extension at all — a
+  compiled program, a `README` with no suffix — used to read as "File"; its
+  first bytes are read instead, so it reports what it actually is. Only files
+  with nothing in the name to go on are read, the answer is remembered until
+  the file changes, and a member of an archive is never read at all.
+- The icon and the *Type* column come from one table, so they can never
+  disagree, and selecting a single file now names it in the status bar rather
+  than counting to one.
+
+### The self-extracting dialogs, split in two
+
+- **The AppImage options window only configures AppImages.** It used to open
+  with a choice of format at the top and every page below it greyed out if you
+  picked the other one. The format is gone from it: all six pages describe an
+  AppImage, so that is what the window is now called and all it asks about.
+- *Commands → Convert archive to SFX* asks which kind first, in a small window
+  that explains the difference — and the `.sfx` stub, which takes no options at
+  all, goes straight to the converter instead of through a window with nothing
+  to fill in.
+- On the Add dialog the kind is already a box beside the button, so pressing
+  **Options…** goes straight to the AppImage settings.
+
+### Files it does not archive, handled properly
+
+- **The viewer shows the file, not its bytes.** It was answering anything it
+  did not recognise with a hex dump; it now asks what the file is and shows
+  the most useful thing it can — text in whatever encoding it turns out to be,
+  images as images, and **Word, PowerPoint, Excel, OpenDocument and EPUB as
+  their text**, lifted out of the XML inside them with nothing but the standard
+  library. **View as hex** is still one click away, because sometimes the hex
+  is what you came for.
+- **What cannot be shown is at least named.** A binary now arrives as
+  "Linux program or library" with its bytes below it and **Open with...** next
+  to it, instead of an unexplained wall of hex.
+- **A `.docx` is a ZIP archive and a document at once, and LinRAR now holds
+  both ideas.** Double-clicking one opens the word processor; **Open as
+  archive** in the right-click menu opens it as the ZIP it is. Previously the
+  file's contents won and Word documents opened as a listing of
+  `word/document.xml`. The same goes for `.xlsx`, `.pptx`, `.odt`, `.ods`,
+  `.odp`, `.epub` and twenty more.
+- **LinRAR no longer takes over what is not its.** Installing it made it the
+  default application for everything in its MIME list; that list now has two
+  halves. It claims archive formats, and it merely *offers* itself for `.jar`,
+  `.apk`, `.deb`, `.rpm`, `.epub` and the office formats — all of which it can
+  open, none of which it should own.
+- **The Type column knows several hundred file types** instead of sixty, and
+  reads them from the same table the viewer does, so the two can never
+  disagree about what a file is.
+
+### More machines, more distributions, more desktops
+
+- **Right-click menus for four more file managers**: PCManFM, PCManFM-Qt and
+  SpaceFM through the freedesktop action spec; **Pantheon Files** through
+  Contractor; **Deepin**'s file manager through its menu extensions; and
+  **Krusader** through its user actions, merged into the existing file with a
+  backup the way Thunar's already was. With Dolphin, Konqueror, Nemo,
+  Nautilus, Caja and Thunar that is ten.
+- The menus offer **Test archive** as well, and their file-type lists went from
+  ten extensions to over fifty — written once now, and reshaped for whichever
+  punctuation each file manager wants.
+- **146 distributions** are recognised, up from about forty, across **18
+  package managers** — ALT Linux's apt-rpm, Mageia's urpmi, GNU Guix, OpenWrt's
+  opkg, CRUX, NuTyX, SliTaz, Slackware and Clear Linux join the existing
+  twelve, with package names for each.
+- **Architecture is no longer assumed.** LinRAR runs wherever Python and Qt do;
+  what does not is `rar`, which RARLAB publishes for four architectures, and
+  the AppImage runtime, published for four others. On POWER, RISC-V, s390x or
+  LoongArch the Dependencies window now says **"Not available here"** with the
+  reason, rather than offering an Install button that cannot succeed, and
+  building an AppImage refuses with an explanation instead of downloading a
+  404. The installer names the machine, and records it in the receipt.
+
+### LinRAR updates itself
+
+- **Help → Check for updates.** LinRAR reads the manifest its own release
+  pipeline publishes, tells you what is available and what changed in it, and
+  installs it if you say so — the tarball, the launcher, the desktop entry and
+  the icons, in one press.
+- **It shows its working.** Seven stages, listed before the first one starts
+  and ticked off as they pass; a download with a byte count, a live speed and a
+  time remaining; a weighted overall bar beside the per-stage one; and a
+  details pane holding every line the updater logged, with **Copy log** for
+  putting it in a bug report.
+- **Nothing that arrives over the network is trusted.** The download must be
+  the size the release declared and must hash to the SHA-256 it published —
+  verified by re-reading the file from disk rather than by trusting the bytes
+  that streamed past. The archive may hold only ordinary files under its own
+  folder: anything with `..` in it, an absolute path or a symlink is refused
+  outright rather than sanitised.
+- **A failed update leaves the version that was working.** The current install
+  is copied aside before anything is replaced, and every failure — a bad
+  download, a refused installer, a cancel — puts it back. The last step starts
+  the newly installed copy in a fresh process and asks its version; a wrong
+  answer is rolled back too, even though every individual step succeeded.
+- **Automatic updates, off until asked for** (*Settings → General → Updates*):
+  check at start-up, install without asking, and include pre-releases. A
+  start-up check reaches the network at most once an hour however often LinRAR
+  is opened, says nothing when there is nothing to say, and never turns a
+  failed check into something the user has to dismiss. **Skip this version**
+  puts one release aside without switching anything off.
+- **It refuses what is not its to replace** — a git checkout, a folder it
+  cannot write to, a system-wide install with no administrator rights — and
+  says which, with the command to run instead. An administrator can lock the
+  `update/` settings to decide it for a whole machine.
+
+### Versions that a program can tell apart
+
+- **One version, in one place.** `linrar/version.py` is now the only place a
+  version number is written down; the About box, `linrar --version`, the git
+  tag, the tarball's name and the installer's receipt all derive from it. It
+  was previously an `APP_VERSION` constant in the middle of a dialog module,
+  which `install.sh` scraped with `sed`.
+- **The numbering is a promise, not decoration.** Semantic Versioning, with the
+  comparison written down rather than left to whoever needs it:
+  `version.is_newer()` knows that 2.10.0 is newer than 2.9.0 though the text
+  says otherwise, that a pre-release ranks below the release it leads to, and
+  that a version it cannot parse is never an upgrade.
+- **A published release knows it is one.** Release artifacts carry a build
+  stamp naming the commit they were cut from, so `version.channel()` tells a
+  downloaded 2.1.0 from a working tree that calls itself 2.1.0 — and an updater
+  can leave the second one alone. `install.sh` records it in the receipt too.
+- **Every release publishes a description of itself.** `latest.json`, at a
+  permanent address, giving the version, what changed, what it needs to run,
+  and every download with its SHA-256. One request answers "is there anything
+  newer, and what do I fetch": [docs/VERSIONING.md](docs/VERSIONING.md) is the
+  contract, down to the updater sketch.
+
+### Releasing, done by the pipeline
+
+- **A release is one commit.** `tools/release.py bump patch` raises the version
+  *and* moves this file's "Unreleased" section under the new number and date,
+  so the two can never disagree; pushing a version that has no tag is what
+  tells `.github/workflows/release.yml` to publish it. A push that does not
+  change the version is never mistaken for a release.
+- Nothing is published that has not passed the whole suite first, and the tag
+  is created by the same call that creates the release — so a run that fails
+  half way leaves no half-release behind, and can simply be run again.
+- `tools/package.sh` builds the tarball reproducibly (same commit in,
+  byte-identical tarball out), from tracked files only, and then **unpacks what
+  it just built and asks it its version** before anybody can be offered it.
+- The whole thing can also be run by hand, with the bump and an `rc` label as
+  inputs, and a dry run that builds and verifies everything and publishes
+  nothing.
 
 ### Fixed
 

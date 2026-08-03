@@ -1,6 +1,7 @@
 # Using LinRAR
 
 - [Browsing](#browsing)
+- [Opening files that are not archives](#opening-files-that-are-not-archives)
 - [When something will not open](#when-something-will-not-open)
 - [Creating archives](#creating-archives)
 - [Extracting](#extracting)
@@ -10,6 +11,7 @@
 - [Passwords](#passwords)
 - [Right-click menu and command line](#right-click-menu-and-command-line)
 - [Keyboard shortcuts](#keyboard-shortcuts)
+- [Keeping LinRAR up to date](#keeping-linrar-up-to-date)
 - [Where your settings live](#where-your-settings-live)
 
 ## Browsing
@@ -32,6 +34,53 @@ branch you opened, because it is revealed rather than rebuilt.
 Five views, from **Options → File list** or `Ctrl+1`…`Ctrl+5`: Details, List,
 Small icons, Large icons, Tiles. Click a column header to sort — the choice is
 remembered, as are the column widths and which columns are shown.
+
+## Opening files that are not archives
+
+Every file in the list is identified: the **Type** column names it and the icon
+draws it — Word, Excel and PowerPoint documents, PDFs, images, audio, video,
+source code, fonts, programs, databases, disc images and keys each have their
+own. A file with no extension at all is identified from its first bytes, so a
+compiled program says so rather than reading as "File". Selecting one names it
+in the status bar.
+
+**Double-clicking** a file that is not an archive hands it to whatever your
+desktop opens it with. **View** (`Ctrl+V`, or double-clicking a member inside
+an archive) opens LinRAR's own viewer, which shows the file rather than its
+bytes:
+
+| What it is | What you see |
+|---|---|
+| Text, source, JSON, XML, CSV, logs | the text, in whatever encoding it turns out to be |
+| PNG, JPEG, GIF, BMP, WebP and friends | the image, scaled to fit |
+| **Word, PowerPoint, Excel** (`.docx`, `.pptx`, `.xlsx`) | the document's **text** — paragraphs, slides, and cells as rows |
+| **OpenDocument and EPUB** (`.odt`, `.ods`, `.odp`, `.epub`) | the same |
+| PDF | LinRAR does not render pages; **Open with...** hands it to your reader |
+| An archive | an offer to **Open in LinRAR** |
+| Anything else | its bytes as a hex dump, with the file *named* above it and **Open with...** beside it |
+
+**View as hex** switches to the raw bytes at any point, and **Save a copy...**
+writes the file out — useful for a member of an archive you only wanted one
+file from.
+
+Documents are shown as plain text: no formatting, no images, no layout. It is
+a preview, and **Open with...** is one button away when you want the real
+thing.
+
+### Documents that are secretly archives
+
+`.docx`, `.xlsx`, `.pptx`, `.odt`, `.epub` and their relations are ZIP archives
+— genuinely, byte for byte. LinRAR can open them as archives, and does when you
+ask:
+
+- **double-click** opens the document in the application that owns it;
+- **right-click → Open as archive** opens the ZIP, so you can pull an image out
+  of a slide deck or look at the XML.
+
+Installing LinRAR does not make it the handler for these, or for `.jar`,
+`.apk`, `.deb`, `.rpm` or `.epub`. It offers itself for all of them — they
+appear in "Open with" — and takes over only the formats whose whole purpose is
+to be unpacked.
 
 ## When something will not open
 
@@ -109,6 +158,28 @@ With *Ask before overwrite* — the default — conflicts are collected before a
 work starts and shown in one prompt with **Yes / Yes to All / No / No to All /
 Rename**.
 
+**Extracting never moves you.** Unpacking an archive from the file list, from
+the right-click menu or from the command line leaves the browser exactly where
+it is: LinRAR reads the archive, shows the progress window, and puts the files
+beside it — it does not open the archive in the background first. The listing
+refreshes when it is done, so the new files appear where you are looking.
+
+### The progress window
+
+Two bars, as in WinRAR, and they do not move together:
+
+- **Current file** — how far through the file named above it.
+- **Total** — how far through the whole job, **weighted by bytes**. Thirty
+  small files followed by one large one is not "almost done" after the small
+  ones, and the bar says so.
+
+Beside them: elapsed time, time left, bytes processed of the total, the file
+count (`14 of 38`), the current speed, and — while an archive is being
+written — how far it has been compressed. The percentage is in the window
+title, so the taskbar carries it when the window is behind something else.
+**Background** hands the job off and reports when it finishes; **Cancel**
+stops it.
+
 Extracting into a folder you do not own is not refused: LinRAR asks for
 administrator rights, unpacks into a private staging folder, and moves the
 result into place as root, so the archive tool itself never runs privileged.
@@ -135,12 +206,17 @@ LinRAR offers both wherever a self-extracting archive can be made:
 
 **Making one while archiving.** In the *Archive name and parameters* dialog,
 tick **Create SFX archive** and pick the kind from the list beside it. The
-archive name follows the choice, **Options…** opens the SFX module, and one
-press of OK compresses *and* wraps — there is no intermediate `.rar` to tidy
-up afterwards.
+archive name follows the choice, **Options…** opens the AppImage settings, and
+one press of OK compresses *and* wraps — there is no intermediate `.rar` to
+tidy up afterwards.
 
 **Converting one that already exists.** **Commands → Convert archive to SFX**
-(`Alt+S`) opens the same dialog with the same two choices.
+(`Alt+S`) asks which of the two you want, and explains the difference.
+
+Only the AppImage has anything to configure — destination, licence, icon, what
+runs afterwards — so it is the only one with an options window. The `.sfx` stub
+is a small shell script that takes no options at all, and choosing it goes
+straight to building the file.
 
 ```bash
 ./MyArchive.AppImage                    # GUI: license → destination → extract
@@ -258,6 +334,71 @@ opening a window, with status **1**.
 | `Ctrl+P` / `Ctrl+S` / `Ctrl+D` | default password / settings / add to favourites |
 | `F1` / `Shift+F1` | help / keyboard shortcuts |
 | `Ctrl+Q` | quit |
+
+## Keeping LinRAR up to date
+
+**Help → Check for updates…** asks whether a newer version has been released.
+Nothing is sent anywhere: it fetches one small file describing the newest
+release and compares the version with yours.
+
+If there is one, you are shown what it is, when it was published, how big the
+download is and what changed, and then you decide. **Update now** takes it
+through seven stages, each ticked off as it passes:
+
+| Stage | What happens |
+|---|---|
+| Checking for updates | asks what the newest release is |
+| Downloading | fetches the release tarball, with a byte count, speed and time left |
+| Verifying | re-reads the file from disk and checks its SHA-256 against the one the release published |
+| Unpacking | opens the archive, refusing anything that tries to write outside its own folder |
+| Backing up | copies your current version aside, so every step after this is reversible |
+| Installing | replaces the files, refreshes the launcher, desktop entry and icons |
+| Finished | starts the new version in a fresh process and confirms it reports the new version |
+
+**Show details** opens a log of everything it did, and **Copy log** puts it on
+the clipboard — that is what to attach to a bug report if an update goes wrong.
+
+**If anything fails, the update is undone.** The backup goes back, and you are
+left with the version that was working, with the reason on screen. That
+includes the last check: an update that installs perfectly but then will not
+start is rolled back too. The backup is kept in
+`~/.cache/linrar/updates/` afterwards, and can be deleted once the new version
+has proved itself.
+
+LinRAR is not restarted for you. When the update is in, it offers **Restart
+LinRAR**; until you take it, the copy you are using is still the old one.
+
+### Automatic updates
+
+**Options → Settings → General → Updates**, all off until you turn them on:
+
+| Setting | What it does |
+|---|---|
+| **Check for updates when LinRAR starts** | a quiet check a couple of seconds after the window opens. Nothing appears unless there is an update; if the server cannot be reached, nothing appears at all |
+| **Download and install them automatically** | when a check finds one, it is installed without being asked first. The window still appears and still shows every stage — "automatic" means without being asked, not without being told |
+| **Include pre-release versions** | offers `2.1.0-rc.1` and friends. Off by default: a pre-release ranks below the release it leads to and is never offered by accident |
+
+A start-up check goes to the network at most once an hour, however many times
+you open LinRAR in between — opening an archive from your file manager should
+not mean an HTTP request every time.
+
+**Skip this version** puts a single version aside; it is never offered again,
+and the next one after it is.
+
+### When it will not update itself
+
+LinRAR refuses to overwrite a copy that is not its to overwrite, and says which
+of these it is:
+
+- **A source checkout.** A clone carries a version number, but nobody published
+  it — update it with `git pull`.
+- **A folder it cannot write to**, which usually means a distribution package.
+  Update it the way the rest of the system is updated.
+- **A system-wide install** (`./install.sh --system`) on a session with no way
+  to become an administrator. The command to run by hand is shown.
+
+Administrators can settle the question for a whole machine by locking the
+`update/` keys — see [Settings for every user](#settings-for-every-user).
 
 ## Where your settings live
 

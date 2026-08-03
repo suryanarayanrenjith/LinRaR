@@ -21,7 +21,6 @@ AppImage already present on the machine, or a download.
 from __future__ import annotations
 
 import os
-import platform
 import shutil
 import struct
 import tempfile
@@ -29,6 +28,7 @@ from dataclasses import dataclass
 from typing import Callable, Optional
 
 from .backends.base import TaskContext
+from . import platform as platform_check
 from . import tools
 from .models import OperationError
 from .process import ProcessRunner
@@ -58,15 +58,49 @@ def cache_dir() -> str:
     return path
 
 
+#: The architectures type2-runtime publishes a runtime for, in AppImage's own
+#: spelling.  There is no runtime for RISC-V, POWER, s390x or LoongArch, so an
+#: AppImage cannot be built there at all -- and saying so beats downloading a
+#: 404 and writing it to the front of somebody's archive.
+RUNTIME_ARCHES = ("x86_64", "i686", "aarch64", "armhf")
+
+#: LinRAR's normalised machine names -> AppImage's.  The two disagree about
+#: 32-bit ARM, which AppImage calls "armhf" and the kernel calls "armv7l".
+_APPIMAGE_NAMES = {
+    "x86_64": "x86_64",
+    "i686": "i686",
+    "aarch64": "aarch64",
+    "armv7l": "armhf",
+    "armv6l": "armhf",
+}
+
+
 def runtime_arch() -> str:
-    """Map the running machine to AppImage's runtime naming."""
-    machine = platform.machine().lower()
-    return {
-        "x86_64": "x86_64", "amd64": "x86_64",
-        "aarch64": "aarch64", "arm64": "aarch64",
-        "armv7l": "armhf", "armv7": "armhf",
-        "i686": "i686", "i386": "i686",
-    }.get(machine, machine)
+    """Map the running machine to AppImage's runtime naming.
+
+    Asked of :mod:`linrar.core.platform` rather than of the standard library,
+    so that every part of LinRAR agrees about which machine this is.
+    """
+    key = platform_check.normalise_machine(platform_check.machine())
+    return _APPIMAGE_NAMES.get(key, key)
+
+
+def runtime_available(arch: str = "") -> bool:
+    """Is there a published AppImage runtime for this machine?"""
+    return (arch or runtime_arch()) in RUNTIME_ARCHES
+
+
+def runtime_unavailable_message() -> str:
+    """Why an AppImage cannot be built here, in words worth showing."""
+    machine = platform_check.architecture()
+    return (
+        f"AppImages cannot be built on {machine.label}.\n\n"
+        "A self-extracting AppImage needs the AppImage project's runtime, "
+        f"which is published for {', '.join(RUNTIME_ARCHES)} and not for "
+        f"{machine.machine or 'this machine'}.\n\n"
+        "Use a RAR .sfx stub instead: it is a shell script and runs anywhere "
+        "unrar does."
+    )
 
 
 def cached_runtime_path() -> str:
@@ -227,6 +261,12 @@ def acquire_runtime(
     if donor and harvest_runtime(donor, cached):
         ctx.on_message(f"Using the AppImage runtime from {donor}")
         return RuntimeSource(cached, f"copied from {os.path.basename(donor)}")
+
+    # Checked after the local options and before the download: a machine with
+    # no published runtime might still have one lying about in an AppImage
+    # somebody copied there, and that works perfectly well.
+    if not runtime_available():
+        raise OperationError(runtime_unavailable_message())
 
     if not allow_download:
         raise OperationError(_no_runtime_message())
@@ -583,6 +623,9 @@ def build_sfx_appimage(
             "    sudo apt install squashfs-tools"
         )
 
+    # Wrapping is a phase of its own: when this follows a compression run in
+    # the same task, its figures must not be read against that one's total.
+    ctx.reset_progress(os.path.basename(output_path))
     ctx.on_message("Preparing the AppImage runtime...")
     runtime = acquire_runtime(allow_download, confirm_download, ctx)
     ctx.on_total(10)

@@ -48,6 +48,28 @@ run.sh                run from the source tree without installing
 
 ## Things worth knowing
 
+**One place computes progress.** `TaskContext` (in `core/backends/base.py`)
+owns the arithmetic behind the two bars: give it a `plan()` of member sizes,
+then call `start_file()` and `advance()`, and it emits the per-file percentage,
+the byte-weighted overall percentage (clamped so it can never retreat when rar
+makes a second pass) and the counters. A tool that reports the *whole* job
+instead of the current file — 7-Zip — calls `set_overall()` and gets the
+per-file figure derived from the plan. Nothing but this class does the sums, so
+every backend's bars agree.
+
+**rar rewrites one terminal line per member.** It prints `Extracting  name`,
+pads to a column, then backspaces over the tail to show ` 42%` and finally
+`  OK`. So the name is on the *live* line as well as the finished one, and
+reading it only from the finished one names each file as it ends. It also
+prints `Extracting from archive.rar` as a header — one space, not two, which
+is what `FILE_LINE_RE` uses to tell prose from a member — and when a name is
+long enough to reach the status column the percentage arrives glued to it.
+
+**Extraction never touches the browser.** `read_archive()` is the half of
+opening an archive that reads it; `open_archive()` adds the half that changes
+what is on screen. Extracting and testing use only the first, so the window
+stays where the user left it.
+
 **A failure is a report, not a sentence.** `core/diagnose.py` inspects the path
 itself — kind, size, permissions, leading bytes, what the name claimed, the
 volume it belongs to, the tool the format needs — and returns a `Problem` with

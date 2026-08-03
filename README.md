@@ -15,6 +15,8 @@ natively on your desktop.
 [Documentation](docs/USAGE.md)
 
 [![tests](https://github.com/suryanarayanrenjith/LinRAR/actions/workflows/tests.yml/badge.svg)](https://github.com/suryanarayanrenjith/LinRAR/actions/workflows/tests.yml)
+[![release](https://github.com/suryanarayanrenjith/LinRAR/actions/workflows/release.yml/badge.svg)](https://github.com/suryanarayanrenjith/LinRAR/actions/workflows/release.yml)
+[![latest release](https://img.shields.io/github/v/release/suryanarayanrenjith/LinRAR?label=release&color=41cd52)](https://github.com/suryanarayanrenjith/LinRAR/releases/latest)
 [![licence: MIT](https://img.shields.io/badge/licence-MIT-blue.svg)](LICENSE)
 [![Linux only](https://img.shields.io/badge/platform-Linux%20only-e95420.svg)](#linux-only)
 [![Python 3.9+](https://img.shields.io/badge/python-3.9%2B-blue.svg)](https://www.python.org/)
@@ -50,6 +52,7 @@ native WinRAR GUI. LinRAR is that GUI, built with PyQt6 on top of `rar`,
 ## Contents
 
 - [Linux only](#linux-only): **read this first**
+- [Architectures](#architectures)
 - [Install](#install)
 - [Setting up the tools](#setting-up-the-tools): **start here after installing**
 - [What it does](#what-it-does)
@@ -68,7 +71,7 @@ desktop:
 |---|---|
 | the Linux builds of `rar`, `unrar`, `7z`, `zip` and `mksquashfs` | the work is done by ELF binaries invoked as child processes |
 | the XDG base directories | settings live in `~/.config/LinRAR/`, defaults in `/etc/linrar/` |
-| freedesktop.org desktop entries, MIME types and service menus | the application menu, file associations and the right-click entries in Dolphin, Nautilus, Nemo, Caja and Thunar |
+| freedesktop.org desktop entries, MIME types and service menus | the application menu, file associations and the right-click entries in ten file managers |
 | `pkexec`, `sudo` or `doas` | asking for administrator rights when a destination is not yours |
 | AppImage and SquashFS | self-extracting archives, the Linux answer to WinRAR's `.exe` SFX |
 
@@ -88,6 +91,23 @@ with a freedesktop.org desktop. None of that exists on Windows.
 $ echo $?
 1
 ```
+
+### Architectures
+
+**Any Linux your distribution builds Python and Qt for**, which in practice is
+all of them — x86-64, ARM, RISC-V, POWER, s390x, LoongArch and the rest. LinRAR
+itself is architecture-neutral, and `unrar`, `7z`, `zip` and `mksquashfs` are
+open source and packaged everywhere.
+
+Two things are not, and LinRAR says so plainly rather than failing oddly:
+
+| | Published for | Elsewhere |
+|---|---|---|
+| **`rar`**, the only thing that can *write* a RAR archive — shareware, shipped as a binary by RARLAB | x86-64, x86, ARM64, ARM32 | Dependencies shows **Not available here** with the reason. Reading and extracting every format still works; only creating `.rar` needs it |
+| **The AppImage runtime** used for self-extracting archives | x86-64, x86, ARM64, ARM32 | Building an AppImage refuses with an explanation and points at the **RAR `.sfx` stub**, which is a shell script and runs anywhere |
+
+`install.sh` names the machine as it goes, warns once if `rar` has no build for
+it, and records the architecture in the install receipt.
 
 **Use instead:** WinRAR or 7-Zip on Windows; Keka or The Unarchiver on macOS;
 the native 7-Zip or unrar port on the BSDs. **Under WSL**, install LinRAR
@@ -133,6 +153,24 @@ installed to remove. Both keep a receipt (`.install-receipt`) so they know.
 `uninstall.sh` reverses every file the installer wrote (launcher, desktop
 entry, icons, MIME defaults, right-click entries and the virtual environment)
 from a manifest it kept, and leaves the project folder for you to delete.
+
+### Or install a released version
+
+Every release is published as a tarball with a checksum beside it, if you would
+rather have a fixed version than whatever `main` says today:
+
+```bash
+curl -LO https://github.com/suryanarayanrenjith/LinRAR/releases/latest/download/SHA256SUMS
+curl -LO "https://github.com/suryanarayanrenjith/LinRAR/releases/latest/download/$(sed 's/.* //' SHA256SUMS)"
+sha256sum -c SHA256SUMS          # must say: OK
+tar xf linrar-*.tar.gz && cd linrar-*/ && ./install.sh
+```
+
+The tarball is the same tree a clone gives you, plus a stamp recording which
+commit it was built from — so `linrar --version` can tell a published release
+from a working copy that happens to carry the same number. Releases are
+numbered by [Semantic Versioning](docs/VERSIONING.md) and each one publishes a
+`latest.json` describing itself, which is what an update checker reads.
 
 **Settings for every user.** `/etc/linrar/linrar.conf` (plus `conf.d`
 drop-ins) sets defaults for everyone on the machine, and can *lock* the ones
@@ -186,13 +224,15 @@ administrator rights.
 
 The table lists every component, where it was found, and which package provides
 it **on your distribution**; package names differ, and LinRAR carries them for
-each of the nine package managers it can drive. Status reads:
+each of the eighteen package managers it can drive, across 146 distributions.
+Status reads:
 
 | Status | Meaning |
 |---|---|
 | **Installed** (green) | found and working; the version and path are shown |
 | **Missing** (red) | a required component; some things simply will not work |
 | **Not installed** (amber) | optional; the features it powers are unavailable |
+| **Not available here** (grey) | nobody publishes it for this architecture — see [Architectures](#architectures) |
 
 Selecting a row explains what that component does, plus anything specific to
 your distribution: that `rar` lives in *multiverse* on Ubuntu, in *RPM Fusion*
@@ -288,9 +328,15 @@ desktop menu entry. An existing archive is converted the same way from
 dialog.
 
 **Extraction**: the full *Extraction path and options* dialog, with WinRAR's
-*Confirm file replace* prompt. Extracting into a folder you do not own asks for
-administrator rights and stages the files, rather than running the archive tool
-as root.
+*Confirm file replace* prompt. Extracting never moves the browser — the window
+stays where it is while the files land beside the archive. Extracting into a
+folder you do not own asks for administrator rights and stages the files,
+rather than running the archive tool as root.
+
+**Progress**: two bars that mean two different things, as WinRAR's do — the
+current file above, the whole job below, weighted by **bytes** rather than by
+file count. With elapsed time, time left, bytes processed, the file count, the
+speed, the live compression figure, and the percentage in the window title.
 
 **Commands**: Test, View, Save as, Delete, Rename, Find, Info, Properties,
 Comment, Protect (recovery record), recovery volumes and reconstruction,
@@ -319,8 +365,11 @@ Full tour and keyboard shortcuts: [docs/USAGE.md](docs/USAGE.md).
 
 ## Right-click menu and command line
 
-After installing, archives get LinRAR entries in Dolphin, Nemo, Nautilus, Caja
-and Thunar. They all call the same command line, which you can use directly.
+After installing, archives get LinRAR entries in **Dolphin, Konqueror, Nemo,
+Nautilus, Caja, Thunar, PCManFM, PCManFM-Qt, SpaceFM, Pantheon Files, Deepin's
+file manager and Krusader** — ten families through six different formats, all
+of them written by `install.sh` and all reversed by `uninstall.sh`. They call
+the same command line, which you can use directly.
 **Every action has a short form as well as the long one**; the long forms are
 what the desktop files use, the short ones are for typing.
 

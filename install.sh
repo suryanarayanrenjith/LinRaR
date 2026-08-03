@@ -455,41 +455,94 @@ if [ -r /etc/os-release ]; then
 fi
 info "distribution: ${DISTRO_NAME}"
 
+# Which machine this is.  LinRAR itself is Python and Qt and runs wherever its
+# distribution builds them; what is architecture-dependent is `rar`, which
+# RARLAB ships as a binary for four architectures, and the AppImage runtime.
+# Naming the machine here means a POWER or RISC-V user is told once, plainly,
+# rather than left wondering why one package will not install.
+ARCH="$(uname -m 2>/dev/null || echo unknown)"
+case "$ARCH" in
+    x86_64|amd64)          ARCH_LABEL="64-bit x86";        RAR_BUILD=1 ;;
+    i386|i486|i586|i686)   ARCH_LABEL="32-bit x86";        RAR_BUILD=1 ;;
+    aarch64|arm64)         ARCH_LABEL="64-bit ARM";        RAR_BUILD=1 ;;
+    armv7l|armv7*|armhf)   ARCH_LABEL="32-bit ARM";        RAR_BUILD=1 ;;
+    riscv64)               ARCH_LABEL="64-bit RISC-V";     RAR_BUILD=0 ;;
+    ppc64le)               ARCH_LABEL="64-bit POWER (LE)"; RAR_BUILD=0 ;;
+    ppc64|ppc)             ARCH_LABEL="POWER";             RAR_BUILD=0 ;;
+    s390x)                 ARCH_LABEL="IBM Z";             RAR_BUILD=0 ;;
+    loongarch64|loong64)   ARCH_LABEL="64-bit LoongArch";  RAR_BUILD=0 ;;
+    mips64el|mipsel|mips*) ARCH_LABEL="MIPS";              RAR_BUILD=0 ;;
+    *)                     ARCH_LABEL="$ARCH";             RAR_BUILD=0 ;;
+esac
+info "architecture: ${ARCH_LABEL} (${ARCH})"
+if [ "$RAR_BUILD" = "0" ]; then
+    warn "RARLAB does not publish 'rar' for ${ARCH_LABEL}"
+    info "unrar, 7z and zip all build here, so LinRAR can read and extract"
+    info "every format; only creating RAR archives needs 'rar'."
+fi
+
 PM=""
 for candidate in "${DISTRO_ID}" ${DISTRO_LIKE:-}; do
     case "$candidate" in
         debian|ubuntu|pop|linuxmint|elementary|zorin|kali|raspbian|deepin|mx|\
-        devuan|neon|tuxedo|parrot|pureos|trisquel)            PM="apt" ;;
+        devuan|neon|tuxedo|parrot|pureos|trisquel|nitrux|siduction|sparky|\
+        antix|q4os|bodhi|peppermint|linuxlite|feren|regolith|ubuntukylin|\
+        kylin|openkylin|uos|astra|bunsenlabs|crunchbang|lmde|refracta|\
+        rasbian|armbian|dietpi|libreelec|batocera|volumio|osmc|\
+        endless|vanilla|blendos|pika|zinc|wubuntu)            PM="apt" ;;
         fedora|rhel|centos|rocky|almalinux|nobara|ol|scientific|amzn|\
-        qubes|mageia)                                         PM="dnf" ;;
+        qubes|mageia|openeuler|anolis|circle|eurolinux|navylinux|\
+        springdale|risios|ultramarine|asahi|azurelinux|mariner|\
+        openanolis|tencentos|alinux|bclinux|kylinsec)         PM="dnf" ;;
         arch|manjaro|endeavouros|garuda|cachyos|artix|arcolinux|\
-        archcraft|steamos)                                    PM="pacman" ;;
-        opensuse*|suse|sles|sled|tumbleweed|leap)             PM="zypper" ;;
-        alpine|postmarketos)                                  PM="apk" ;;
+        archcraft|steamos|archbang|blackarch|parabola|hyperbola|\
+        crystal|rebornos|obarun|archman|instantos|athena|\
+        biglinux|xerolinux|snal|bluestar)                     PM="pacman" ;;
+        opensuse*|suse|sles|sled|tumbleweed|leap|geckolinux|\
+        aeon|kalpa|microos|slowroll)                          PM="zypper" ;;
+        alpine|postmarketos|chimera|wolfi|adelie)             PM="apk" ;;
         void)                                                 PM="xbps" ;;
         solus)                                                PM="eopkg" ;;
-        gentoo|funtoo|calculate)                              PM="emerge" ;;
+        gentoo|funtoo|calculate|redcore|sabayon|pentoo|\
+        exherbo)                                              PM="emerge" ;;
         nixos)                                                PM="nix" ;;
-        slackware)                                            PM="slackpkg" ;;
+        guix|guixsd)                                          PM="guix" ;;
+        slackware|salix|slax|porteus|absolute|zenwalk)        PM="slackpkg" ;;
         clear-linux-os)                                       PM="swupd" ;;
-        openmandriva|pclinuxos)                               PM="dnf" ;;
+        openmandriva|pclinuxos|rosa)                          PM="dnf" ;;
+        altlinux|alt)                                         PM="apt-rpm" ;;
+        crux)                                                 PM="prt-get" ;;
+        nutyx)                                                PM="cards" ;;
+        slitaz)                                               PM="tazpkg" ;;
+        pisi|pardus)                                          PM="apt" ;;
+        openwrt|lede|entware)                                 PM="opkg" ;;
+        sourcemage)                                           PM="sorcery" ;;
     esac
     [ -n "$PM" ] && break
 done
 if [ -z "$PM" ]; then
-    for candidate in apt-get apt dnf5 dnf yum pacman zypper apk xbps-install \
-                     eopkg emerge nix-env swupd slackpkg; do
-        if have "$candidate"; then
-            case "$candidate" in
-                apt-get|apt) PM="apt" ;;
-                dnf5|dnf|yum) PM="dnf" ;;
-                xbps-install) PM="xbps" ;;
-                nix-env)      PM="nix" ;;
-                *)            PM="$candidate" ;;
-            esac
-            break
-        fi
-    done
+    # No os-release match: ask the machine what it actually has.  The order
+    # matters -- apt-rpm systems (ALT Linux) also answer to `apt`, so the
+    # rpm-flavoured check has to come first.
+    if have apt-get && have rpm && ! have dpkg; then
+        PM="apt-rpm"
+    else
+        for candidate in apt-get apt dnf5 dnf yum pacman zypper apk \
+                         xbps-install eopkg emerge nix-env guix swupd \
+                         slackpkg urpmi prt-get cards tazpkg opkg; do
+            if have "$candidate"; then
+                case "$candidate" in
+                    apt-get|apt)  PM="apt" ;;
+                    dnf5|dnf|yum) PM="dnf" ;;
+                    xbps-install) PM="xbps" ;;
+                    nix-env)      PM="nix" ;;
+                    urpmi)        PM="urpmi" ;;
+                    *)            PM="$candidate" ;;
+                esac
+                break
+            fi
+        done
+    fi
 fi
 
 # Image-based distributions (Silverblue, Kinoite, Bazzite, Aurora, uBlue...)
@@ -526,6 +579,17 @@ pm_install() {  # pm_install <package>...
         rpm-ostree) as_root rpm-ostree install --idempotent --apply-live "$@" \
                     || as_root rpm-ostree install --idempotent "$@" ;;
         nix)        nix-env -iA "$@" ;;
+        # ALT Linux: apt speaking to an RPM database.  Same command line as
+        # Debian's apt, entirely different package names.
+        apt-rpm)    as_root apt-get install -y "$@" ;;
+        urpmi)      as_root urpmi --auto "$@" ;;
+        guix)       guix install "$@" ;;
+        opkg)       as_root opkg update >/dev/null 2>&1 || true
+                    as_root opkg install "$@" ;;
+        prt-get)    as_root prt-get depinst "$@" ;;
+        cards)      as_root cards install "$@" ;;
+        tazpkg)     as_root tazpkg get-install "$@" ;;
+        sorcery)    as_root cast "$@" ;;
         *)          return 1 ;;
     esac
 }
@@ -591,6 +655,62 @@ packages_for() {  # packages_for <role>
         swupd:archive) echo "archive-tools" ;;
         swupd:rar)     echo "" ;;
         swupd:keyring) echo "" ;;
+
+        # ALT Linux: apt over rpm, with its own naming ("libX" not "libX0").
+        apt-rpm:python)  echo "python3 python3-module-pip" ;;
+        apt-rpm:qt)      echo "libxcb-cursor libGL" ;;
+        apt-rpm:archive) echo "unrar p7zip zip squashfs-tools" ;;
+        apt-rpm:rar)     echo "rar" ;;
+        apt-rpm:keyring) echo "libsecret" ;;
+
+        # Mageia and ROSA, when urpmi is the front end rather than dnf.
+        urpmi:python)  echo "python3 python3-pip" ;;
+        urpmi:qt)      echo "lib64xcb-cursor0 lib64mesagl1" ;;
+        urpmi:archive) echo "unrar p7zip zip squashfs-tools" ;;
+        urpmi:rar)     echo "rar" ;;
+        urpmi:keyring) echo "libsecret" ;;
+
+        guix:python)   echo "python" ;;
+        guix:qt)       echo "xcb-util-cursor mesa" ;;
+        guix:archive)  echo "unrar-free p7zip zip squashfs-tools" ;;
+        guix:rar)      echo "" ;;      # nonfree; not in the Guix channels
+        guix:keyring)  echo "libsecret" ;;
+
+        opkg:python)   echo "python3 python3-pip python3-venv" ;;
+        opkg:qt)       echo "" ;;
+        opkg:archive)  echo "unrar p7zip zip" ;;
+        opkg:rar)      echo "" ;;
+        opkg:keyring)  echo "" ;;
+
+        prt-get:python)  echo "python3" ;;
+        prt-get:qt)      echo "xcb-util-cursor" ;;
+        prt-get:archive) echo "unrar p7zip zip squashfs-tools" ;;
+        prt-get:rar)     echo "" ;;
+        prt-get:keyring) echo "libsecret" ;;
+
+        cards:python)  echo "python3" ;;
+        cards:qt)      echo "xcb-util-cursor" ;;
+        cards:archive) echo "unrar p7zip zip squashfs-tools" ;;
+        cards:rar)     echo "" ;;
+        cards:keyring) echo "libsecret" ;;
+
+        tazpkg:python)  echo "python3" ;;
+        tazpkg:qt)      echo "" ;;
+        tazpkg:archive) echo "unrar p7zip zip" ;;
+        tazpkg:rar)     echo "" ;;
+        tazpkg:keyring) echo "" ;;
+
+        slackpkg:python)  echo "python3" ;;
+        slackpkg:qt)      echo "" ;;
+        slackpkg:archive) echo "p7zip zip squashfs-tools" ;;
+        slackpkg:rar)     echo "" ;;
+        slackpkg:keyring) echo "libsecret" ;;
+
+        sorcery:python)  echo "python3" ;;
+        sorcery:qt)      echo "xcb-util-cursor" ;;
+        sorcery:archive) echo "unrar p7zip zip squashfs-tools" ;;
+        sorcery:rar)     echo "" ;;
+        sorcery:keyring) echo "libsecret" ;;
 
         *) echo "" ;;
     esac
@@ -805,12 +925,44 @@ if [ ! -f "${ICON_DATA}/hicolor/index.theme" ]; then
     } | write_file "${ICON_DATA}/hicolor/index.theme" 644
 fi
 
+# Types LinRAR becomes the *default* application for.  Archive formats and
+# nothing else: these are files whose whole purpose is to be unpacked.
 MIMES="application/x-rar;application/vnd.rar;application/x-rar-compressed;\
 application/zip;application/x-zip-compressed;application/x-7z-compressed;\
 application/x-tar;application/gzip;application/x-gzip;application/x-bzip2;\
 application/x-xz;application/x-compressed-tar;application/x-bzip-compressed-tar;\
 application/x-xz-compressed-tar;application/x-cd-image;application/x-cab;\
-application/x-lzma;application/zstd;"
+application/x-lzma;application/zstd;application/x-zstd-compressed-tar;\
+application/x-lz4;application/x-lzip;application/x-lzop;application/x-arj;\
+application/x-lha;application/x-lzh-compressed;application/x-ace;\
+application/x-cpio;application/x-ms-wim;application/x-squashfs;\
+application/x-xar;application/x-archive;application/x-compress;\
+application/x-lrzip;application/x-lzma-compressed-tar;\
+application/x-lz4-compressed-tar;application/x-tarz;application/x-cbr;\
+application/x-cbz;application/vnd.comicbook-rar;application/vnd.comicbook+zip;"
+
+# Types LinRAR can open but must never take over.  A .jar belongs to the JVM,
+# a .deb to the package manager, an .epub to the reader, a .docx to the office
+# suite -- LinRAR can look inside all of them, and says so by listing them in
+# its desktop entry and its right-click menus, but it does not claim to be
+# what should happen when one is double-clicked.  These are deliberately kept
+# out of the xdg-mime default loop below.
+MIMES_SECONDARY="application/java-archive;\
+application/vnd.android.package-archive;application/epub+zip;\
+application/vnd.debian.binary-package;application/x-deb;application/x-rpm;\
+application/x-redhat-package-manager;application/x-apple-diskimage;\
+application/x-msi;application/x-iso9660-appimage;application/vnd.snap;\
+application/x-source-rpm;application/x-xpinstall;\
+application/vnd.openxmlformats-officedocument.wordprocessingml.document;\
+application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;\
+application/vnd.openxmlformats-officedocument.presentationml.presentation;\
+application/vnd.oasis.opendocument.text;\
+application/vnd.oasis.opendocument.spreadsheet;\
+application/vnd.oasis.opendocument.presentation;"
+
+#: What the desktop entry and the context menus offer: everything LinRAR can
+#: open, whether or not it should be the default for it.
+MIMES_ALL="${MIMES}${MIMES_SECONDARY}"
 
 write_file "$DESKTOP_FILE" 644 <<EOF
 [Desktop Entry]
@@ -826,7 +978,7 @@ Terminal=false
 StartupNotify=true
 StartupWMClass=LinRAR
 Categories=Utility;Archiving;Compression;FileTools;
-MimeType=${MIMES}
+MimeType=${MIMES_ALL}
 Keywords=archive;rar;zip;7z;compress;extract;unpack;
 Actions=ExtractHere;ExtractTo;Compress;Test;
 
@@ -856,13 +1008,37 @@ ok "${DESKTOP_FILE}"
 
 step "Adding right-click entries to file managers"
 
+# Every file manager wants the same list in a slightly different punctuation,
+# so it is written once here and reshaped where it is used.  Keeping them in
+# step is the whole point: an archive LinRAR can open should offer the same
+# menu whichever desktop the user happens to be on.
+ARCHIVE_SUFFIXES="rar cbr r00 zip zipx cbz jar apk epub xpi whl 7z cb7 \
+tar gz tgz bz2 tbz tbz2 xz txz zst tzst lzma tlz lz lz4 z cab iso img \
+arj lzh lha ace deb udeb rpm ar cpio wim swm esd dmg msi squashfs sfs \
+snap vhd vhdx xar pkg sfx appimage"
+
+# "rar;zip;7z;" -- Nemo's Extensions key and Deepin's X-DFM-SupportSuffix.
+suffix_list() {
+    local out="" suffix
+    for suffix in $ARCHIVE_SUFFIXES; do out="${out}${suffix};"; done
+    printf '%s' "$out"
+}
+# "*.rar;*.zip;" -- Thunar's patterns and the DES-EMA action files.
+pattern_list() {
+    local out="" suffix
+    for suffix in $ARCHIVE_SUFFIXES; do out="${out}*.${suffix};"; done
+    printf '%s' "${out%;}"
+}
+SUFFIXES="$(suffix_list)"
+PATTERNS="$(pattern_list)"
+
 # -- KDE / Dolphin: a service menu with four actions --
 for kde_dir in "${DATA_DIR}/kio/servicemenus" "${DATA_DIR}/kservices5/ServiceMenus"; do
     write_file "${kde_dir}/${APP_ID}.desktop" 755 <<EOF
 [Desktop Entry]
 Type=Service
 ServiceTypes=KonqPopupMenu/Plugin
-MimeType=${MIMES}inode/directory;
+MimeType=${MIMES_ALL}inode/directory;
 Actions=LinRARExtractHere;LinRARExtractTo;LinRARCompress;LinRARTest;LinRAROpen;
 X-KDE-Priority=TopLevel
 Icon=${APP_ID}
@@ -911,9 +1087,11 @@ EOF
 }
 if [ "$MODE" = "user" ] || [ -d /usr/share/nemo ]; then
     nemo_action "linrar-extract-here.nemo_action" "Extract here" \
-        "--extract-here" "notnone" "rar;zip;7z;tar;gz;bz2;xz;tgz;iso;cab;"
+        "--extract-here" "notnone" "$SUFFIXES"
     nemo_action "linrar-extract-to.nemo_action" "Extract to..." \
-        "--extract-to" "notnone" "rar;zip;7z;tar;gz;bz2;xz;tgz;iso;cab;"
+        "--extract-to" "notnone" "$SUFFIXES"
+    nemo_action "linrar-test.nemo_action" "Test archive" \
+        "--test" "notnone" "$SUFFIXES"
     nemo_action "linrar-compress.nemo_action" "Add to archive..." \
         "--add" "notnone" "any"
     ok "Nemo actions"
@@ -953,7 +1131,7 @@ ok "Nautilus / Nemo / Caja scripts"
 # -- Thunar (XFCE): merge into its custom-actions file --
 THUNAR_UCA="${XDG_CONFIG_HOME:-$HOME/.config}/Thunar/uca.xml"
 if [ "$MODE" = "user" ] && have python3; then
-    if python3 - "$THUNAR_UCA" "$LAUNCHER" <<'PYEOF'
+    if python3 - "$THUNAR_UCA" "$LAUNCHER" "$PATTERNS" <<'PYEOF'
 import os, shutil, sys, xml.etree.ElementTree as ET
 
 path, launcher = sys.argv[1], sys.argv[2]
@@ -969,11 +1147,11 @@ else:
     root = ET.Element("actions")
     tree = ET.ElementTree(root)
 
+patterns = sys.argv[3] if len(sys.argv) > 3 else "*.rar;*.zip;*.7z"
 ACTIONS = [
-    ("LinRAR: Extract here", "--extract-here",
-     "<archives>", "*.rar;*.zip;*.7z;*.tar;*.gz;*.bz2;*.xz;*.tgz;*.iso;*.cab"),
-    ("LinRAR: Extract to...", "--extract-to",
-     "<archives>", "*.rar;*.zip;*.7z;*.tar;*.gz;*.bz2;*.xz;*.tgz;*.iso;*.cab"),
+    ("LinRAR: Extract here", "--extract-here", "<archives>", patterns),
+    ("LinRAR: Extract to...", "--extract-to", "<archives>", patterns),
+    ("LinRAR: Test archive", "--test", "<archives>", patterns),
     ("LinRAR: Add to archive...", "--add", "<any file>", "*"),
 ]
 existing = {action.findtext("name", "") for action in root.findall("action")}
@@ -1003,6 +1181,150 @@ PYEOF
         ok "Thunar custom actions (previous file backed up alongside it)"
     else
         warn "could not update Thunar's uca.xml; left untouched"
+    fi
+fi
+
+# -- PCManFM, PCManFM-Qt, SpaceFM: the freedesktop action spec --
+#
+# DES-EMA ("Desktop Entry Specification - Extension: Menu Actions") is the one
+# right-click format more than one project agreed on.  LXDE, LXQt, SpaceFM and
+# FileManager-Actions all read it out of $XDG_DATA_DIRS/file-manager/actions,
+# so one set of files reaches all four.
+action_file() {  # action_file <id> <label> <flag> <mimetypes>
+    write_file "${DATA_DIR}/file-manager/actions/linrar-$1.desktop" 644 <<EOF
+[Desktop Entry]
+Type=Action
+Name=$2
+Tooltip=$2 with ${APP_NAME}
+Icon=${APP_ID}
+Profiles=linrar;
+
+[X-Action-Profile linrar]
+Name=Default profile
+Exec=${LAUNCHER} $3 %F
+MimeTypes=$4
+SelectionCount=>0
+EOF
+}
+action_file "extract-here" "Extract here" "--extract-here" "$MIMES_ALL"
+action_file "extract-to"   "Extract to..." "--extract-to"  "$MIMES_ALL"
+action_file "test"         "Test archive"  "--test"        "$MIMES_ALL"
+action_file "compress"     "Add to archive..." "--add"     "*/*"
+# The submenu that gathers them, so the four do not sit loose in the menu.
+write_file "${DATA_DIR}/file-manager/actions/linrar-menu.desktop" 644 <<EOF
+[Desktop Entry]
+Type=Menu
+Name=${APP_NAME}
+Icon=${APP_ID}
+ItemsList=linrar-extract-here;linrar-extract-to;linrar-test;linrar-compress;
+EOF
+ok "PCManFM / PCManFM-Qt / SpaceFM actions"
+
+# -- elementary OS (Pantheon Files): contractor --
+#
+# Pantheon has no service menus; it asks Contractor what can be done with the
+# selection.  One small file per action, and it appears in "Other Actions".
+contract() {  # contract <id> <label> <description> <flag> <mimetypes>
+    write_file "${DATA_DIR}/contractor/linrar-$1.contract" 644 <<EOF
+[Contractor Entry]
+Name=$2
+Icon=${APP_ID}
+Description=$3
+MimeType=$5
+Exec=${LAUNCHER} $4 %U
+EOF
+}
+contract "extract-here" "Extract here" \
+    "Unpack this archive beside itself" "--extract-here" "$MIMES_ALL"
+contract "extract-to" "Extract to..." \
+    "Unpack this archive, asking where and how" "--extract-to" "$MIMES_ALL"
+contract "test" "Test archive" \
+    "Check this archive for damage" "--test" "$MIMES_ALL"
+contract "compress" "Add to archive..." \
+    "Compress the selection with ${APP_NAME}" "--add" "!inode/directory"
+ok "Pantheon Files contracts"
+
+# -- Deepin (dde-file-manager): OEM menu extensions --
+dde_menu() {  # dde_menu <id> <label> <flag> <types> <suffixes>
+    write_file \
+        "${DATA_DIR}/deepin/dde-file-manager/oem-menuextensions/linrar-$1.desktop" \
+        644 <<EOF
+[Desktop Entry]
+Type=Application
+Name=$2
+Icon=${APP_ID}
+Exec=${LAUNCHER} $3 %F
+X-DFM-MenuTypes=$4
+X-DFM-SupportSuffix=$5
+EOF
+}
+dde_menu "extract-here" "Extract here" "--extract-here" \
+    "SingleFile;MultiFileDirs;" "$SUFFIXES"
+dde_menu "extract-to" "Extract to..." "--extract-to" \
+    "SingleFile;MultiFileDirs;" "$SUFFIXES"
+dde_menu "compress" "Add to archive..." "--add" \
+    "SingleFile;MultiFileDirs;SingleDir;" "*"
+ok "Deepin file manager menu extensions"
+
+# -- Krusader: user actions --
+#
+# Krusader keeps every user action in one XML file, so this merges rather than
+# writes, exactly as the Thunar block above does, and keeps a backup.
+KRUSADER_ACTIONS="${DATA_DIR}/krusader/useractions.xml"
+if have python3; then
+    if python3 - "$KRUSADER_ACTIONS" "$LAUNCHER" "$APP_NAME" <<'PYEOF'
+import os, shutil, sys, xml.etree.ElementTree as ET
+
+path, launcher, app = sys.argv[1], sys.argv[2], sys.argv[3]
+os.makedirs(os.path.dirname(path), exist_ok=True)
+if os.path.exists(path):
+    shutil.copy2(path, path + ".linrar-backup")
+    try:
+        tree = ET.parse(path)
+        root = tree.getroot()
+    except ET.ParseError:
+        sys.exit(1)
+else:
+    root = ET.Element("KrusaderUserActions")
+    tree = ET.ElementTree(root)
+
+ACTIONS = [
+    ("linrar_extract_here", "Extract here", "--extract-here",
+     "Unpack the selected archives beside themselves"),
+    ("linrar_extract_to", "Extract to...", "--extract-to",
+     "Unpack the selected archives, asking where and how"),
+    ("linrar_test", "Test archive", "--test",
+     "Check the selected archives for damage"),
+    ("linrar_add", "Add to archive...", "--add",
+     "Compress the selection"),
+]
+existing = {action.get("name", "") for action in root.findall("action")}
+added = 0
+for name, title, flag, tooltip in ACTIONS:
+    if name in existing:
+        continue
+    action = ET.SubElement(root, "action")
+    action.set("name", name)
+    for tag, text in (
+        ("title", f"{app}: {title}"),
+        ("tooltip", tooltip),
+        ("icon", "linrar"),
+        ("category", app),
+    ):
+        ET.SubElement(action, tag).text = text
+    command = ET.SubElement(action, "command")
+    command.set("executionmode", "normal")
+    # %aList("selected")% expands to every selected file, quoted by Krusader.
+    command.text = f'"{launcher}" {flag} %aList("selected")%'
+    added += 1
+if added:
+    tree.write(path, encoding="UTF-8", xml_declaration=True)
+PYEOF
+    then
+        record "$KRUSADER_ACTIONS"
+        ok "Krusader user actions"
+    else
+        warn "could not update Krusader's useractions.xml; left untouched"
     fi
 fi
 
@@ -1058,7 +1380,9 @@ if have gtk-update-icon-cache; then
     fi
 fi
 if have xdg-mime && [ "$MODE" = "user" ]; then
-    # Make LinRAR the default handler for the archive types it owns.
+    # Make LinRAR the default handler for the archive types it owns -- $MIMES
+    # and deliberately not $MIMES_ALL.  LinRAR can open a .jar, a .deb and a
+    # .docx, and offers to; it does not take them over.
     IFS=';' read -r -a MIME_LIST <<< "$MIMES"
     for mime in "${MIME_LIST[@]}"; do
         [ -n "$mime" ] && xdg-mime default "${APP_ID}.desktop" "$mime" 2>/dev/null || true
@@ -1077,19 +1401,44 @@ elif have kbuildsycoca5; then kbuildsycoca5 >/dev/null 2>&1 || true; fi
 
 step "Recording the install"
 
-APP_VERSION="$(sed -n 's/^APP_VERSION = "\(.*\)"$/\1/p' \
-    "${APP_DIR}/linrar/ui/dialogs/misc.py" | head -1)"
+# linrar/version.py is the one place the version is written down.  It is read
+# as text rather than imported: this has to work before PyQt6 is guaranteed to
+# be importable, and a sed cannot fail the way an interpreter can.
+APP_VERSION="$(sed -n 's/^__version__ = "\(.*\)"$/\1/p' \
+    "${APP_DIR}/linrar/version.py" | head -1)"
 [ -n "$APP_VERSION" ] || APP_VERSION="unknown"
+
+# Which build, as distinct from which version.  A folder unpacked from a
+# release tarball carries the stamp tools/package.sh wrote; a clone does not,
+# so fall back to the checkout's own commit.  Either way this is what tells an
+# updater whether the installed copy is the published 2.1.0 or someone's
+# working tree that calls itself 2.1.0.
+APP_BUILD=""
+if [ -f "${APP_DIR}/linrar/_build.py" ]; then
+    # Guarded by the -f above and closed with a || true: this script runs under
+    # `set -e` with pipefail, so a sed that cannot open its input would take
+    # the whole install down one line before the receipt is written -- and an
+    # install with no receipt is one uninstall.sh cannot reverse.
+    APP_BUILD="$(sed -n 's/^ *"commit": "\([0-9a-fA-F]\{7,40\}\)".*/\1/p' \
+        "${APP_DIR}/linrar/_build.py" | head -1 || true)"
+fi
+if [ -z "$APP_BUILD" ] && have git; then
+    APP_BUILD="$(git -C "$APP_DIR" rev-parse HEAD 2>/dev/null || true)"
+fi
 
 receipt_body() {
     printf '# %s installation receipt, written by install.sh.\n' "$APP_NAME"
     printf '# Remove it with ./uninstall.sh, not by hand.\n'
     printf 'app=%s\n'      "$APP_NAME"
     printf 'version=%s\n'  "$APP_VERSION"
+    if [ -n "$APP_BUILD" ]; then
+        printf 'build=%s\n' "$APP_BUILD"
+    fi
     printf 'mode=%s\n'     "$MODE"
     printf 'date=%s\n'     "$(date '+%Y-%m-%d %H:%M:%S %z')"
     printf 'user=%s\n'     "$(id -un)"
     printf 'host=%s\n'     "$(uname -n)"
+    printf 'arch=%s\n'     "$ARCH"
     printf 'project=%s\n'  "$APP_DIR"
     printf 'launcher=%s\n' "$LAUNCHER"
     printf 'desktop=%s\n'  "$DESKTOP_FILE"

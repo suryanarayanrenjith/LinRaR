@@ -519,21 +519,28 @@ class ArchiveDialog(QDialog):
             self.volume_combo.setToolTip("")
 
     def _configure_sfx(self) -> None:
-        """Open the SFX dialog for the AppImage settings."""
+        """Open the AppImage options.
+
+        The kind is chosen by the combo box beside this button, so the options
+        window is not asked to offer it a second time -- and the stub has no
+        options, so the button does not apply to it at all.
+        """
+        if self.sfx_kind == sfx_dialog.RAR_STUB:
+            QMessageBox.information(
+                self,
+                "LinRAR",
+                "The RAR .sfx stub takes no options: it is a small shell "
+                "script that unpacks the archive beside itself.\n\n"
+                "Choose AppImage beside this button if you want a "
+                "configurable self-extracting file.",
+            )
+            return
         dialog = sfx_dialog.SfxDialog(
-            self,
-            archive_path=self.name_edit.text().strip(),
-            sfx_format=self.sfx_kind or sfx_dialog.APPIMAGE,
+            self, archive_path=self.name_edit.text().strip()
         )
         if dialog.exec() != sfx_dialog.SfxDialog.DialogCode.Accepted:
             return
-        # The dialog can change the format too, so the row follows it.
-        index = self.sfx_combo.findData(dialog.sfx_format)
-        if index >= 0:
-            self.sfx_combo.setCurrentIndex(index)
-        self._sfx_options = (
-            dialog.options() if dialog.sfx_format == sfx_dialog.APPIMAGE else None
-        )
+        self._sfx_options = dialog.options()
 
     def _on_method_changed(self, _index: int) -> None:
         if self._ready:

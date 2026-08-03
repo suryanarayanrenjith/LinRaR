@@ -86,20 +86,21 @@ class SevenZipBackend(ArchiveBackend):
         cwd: Optional[str] = None,
     ) -> ProcessRunner:
         ctx = ctx or TaskContext()
-        state = {"current": "", "last": -1}
+        state = {"last": -1}
 
         def observe(line: str) -> None:
-            pct = parse_percent(line)
-            if pct is not None and pct != state["last"]:
-                state["last"] = pct
-                ctx.on_percent(pct)
-                ctx.on_total(pct)
+            # Unlike rar, 7z's percentage is the progress of the *whole*
+            # operation, so it drives the overall bar and the per-file figure
+            # is worked back out of it.
             match = _PROGRESS_FILE_RE.search(line)
             if match:
                 name = match.group(1).strip()
-                if name and name != state["current"]:
-                    state["current"] = name
-                    ctx.on_file(name)
+                if name:
+                    ctx.start_file(name)
+            pct = parse_percent(line)
+            if pct is not None and pct != state["last"]:
+                state["last"] = pct
+                ctx.set_overall(pct)
 
         def on_line(line: str) -> None:
             observe(line)

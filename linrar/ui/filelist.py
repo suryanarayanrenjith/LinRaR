@@ -25,6 +25,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from ..core import filetypes
 from ..core.models import ArchiveEntry, format_size
 from ..core.registry import looks_like_archive
 from . import icons, theme
@@ -60,36 +61,21 @@ _VIEW_GEOMETRY = {
 #: row heights offered by the Customize dialog, in extra pixels per row
 ROW_SPACING = {"compact": 0, "normal": 4, "relaxed": 10}
 
-# Descriptions shown in the Type column, mirroring a Windows shell listing.
-_TYPES = {
-    ".txt": "Text Document", ".log": "Text Document", ".md": "Markdown File",
-    ".pdf": "PDF Document", ".doc": "Word Document", ".docx": "Word Document",
-    ".xls": "Excel Worksheet", ".xlsx": "Excel Worksheet",
-    ".ppt": "PowerPoint Presentation", ".pptx": "PowerPoint Presentation",
-    ".jpg": "JPEG Image", ".jpeg": "JPEG Image", ".png": "PNG Image",
-    ".gif": "GIF Image", ".bmp": "Bitmap Image", ".svg": "SVG Image",
-    ".webp": "WebP Image", ".ico": "Icon",
-    ".mp3": "MP3 Audio", ".wav": "Wave Audio", ".flac": "FLAC Audio",
-    ".ogg": "OGG Audio", ".m4a": "MPEG-4 Audio",
-    ".mp4": "MP4 Video", ".mkv": "Matroska Video", ".avi": "AVI Video",
-    ".mov": "QuickTime Video", ".webm": "WebM Video",
+# The Type column names an archive after the program that opens it, the way
+# WinRAR's listing does -- "LinRAR archive" rather than "RAR archive" -- so
+# these few override the shared table.  Everything else, and there are several
+# hundred of them, comes from linrar.core.filetypes, which is also what the
+# viewer asks; the column and the viewer can never disagree about what a file
+# is because they are reading the same table.
+_ARCHIVE_TYPES = {
     ".rar": "LinRAR archive", ".zip": "LinRAR ZIP archive",
     ".7z": "LinRAR archive", ".tar": "LinRAR archive",
-    ".gz": "LinRAR archive", ".bz2": "LinRAR archive", ".xz": "LinRAR archive",
+    ".gz": "LinRAR archive", ".tgz": "LinRAR archive",
+    ".bz2": "LinRAR archive", ".xz": "LinRAR archive",
     ".zst": "LinRAR archive", ".lz": "LinRAR archive", ".lz4": "LinRAR archive",
     ".lzma": "LinRAR archive", ".z": "LinRAR archive",
     ".arj": "LinRAR archive", ".lzh": "LinRAR archive",
-    ".cab": "Cabinet File", ".cpio": "cpio Archive", ".ar": "ar Archive",
-    ".a": "Static Library", ".wim": "Windows Image", ".msi": "Windows Installer",
-    ".dmg": "Apple Disk Image", ".squashfs": "SquashFS Image",
-    ".sfs": "SquashFS Image", ".snap": "Snap Package",
-    ".iso": "Disc Image File", ".deb": "Debian Package", ".rpm": "RPM Package",
-    ".appimage": "AppImage", ".sh": "Shell Script", ".py": "Python File",
-    ".c": "C Source", ".h": "C Header", ".cpp": "C++ Source",
-    ".js": "JavaScript File", ".ts": "TypeScript File", ".json": "JSON File",
-    ".html": "HTML Document", ".htm": "HTML Document", ".css": "Cascading Style Sheet",
-    ".xml": "XML Document", ".yml": "YAML File", ".yaml": "YAML File",
-    ".so": "Shared Library", ".ttf": "TrueType Font", ".otf": "OpenType Font",
+    ".cbr": "LinRAR comic book archive", ".cbz": "LinRAR comic book archive",
 }
 
 
@@ -110,17 +96,27 @@ class ListingItem:
     entry: Optional[ArchiveEntry] = None
 
     @property
+    def _identity(self) -> filetypes.FileType:
+        """What this entry is.  Consults the disk only when the name cannot say.
+
+        A member of an archive has no path to read, and a name with an
+        extension needs no reading, so the overwhelming majority of rows are
+        answered without any I/O at all.
+        """
+        if self.entry is None and self.path and not filetypes.extension_of(self.name):
+            return filetypes.identify_file(self.path, self.name)
+        return filetypes.by_name(self.name)
+
+    @property
     def type_name(self) -> str:
         if self.is_parent:
             return ""
         if self.is_dir:
             return "File folder"
         ext = os.path.splitext(self.name)[1].lower()
-        if ext in _TYPES:
-            return _TYPES[ext]
-        if ext:
-            return f"{ext[1:].upper()} File"
-        return "File"
+        if ext in _ARCHIVE_TYPES:
+            return _ARCHIVE_TYPES[ext]
+        return self._identity.label
 
     @property
     def icon_name(self) -> str:
@@ -128,9 +124,15 @@ class ListingItem:
             return "folder-up"
         if self.is_dir:
             return "folder"
-        if looks_like_archive(self.name):
+        # The type table is asked first, and the archive test is the fallback
+        # rather than the other way round.  Several extensions are both -- an
+        # .epub and a .jar are ZIP archives, an .iso is an archive LinRAR
+        # opens -- and for those the useful drawing is the one that says what
+        # the file is *for*, not the one that says how it is stored.
+        drawn = filetypes.icon_for(self.name, self._identity.kind)
+        if drawn == "file" and looks_like_archive(self.name):
             return "archive-small"
-        return "file"
+        return drawn
 
 
 class FileListModel(QAbstractTableModel):

@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+import os
 import time
 
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal
 from PyQt6.QtWidgets import (
     QDialog,
-    QFormLayout,
+    QGridLayout,
     QGroupBox,
     QHBoxLayout,
     QLabel,
@@ -45,11 +46,17 @@ class ProgressDialog(QDialog):
         self.setWindowFlag(Qt.WindowType.WindowCloseButtonHint, True)
 
         self.task = task
+        self.title = title
         self.total_bytes = total_bytes
         self._start = time.monotonic()
         self._finished = False
         self._cancelling = False
         self._started = False
+        self._bytes_done = 0
+        self._files_done = 0
+        self._files_total = 0
+        #: Archive being written, watched for the live compression ratio.
+        self._ratio_path = ""
         #: Set when the user pressed "Background": the dialog closes but the
         #: task keeps running; the caller takes over completion handling.
         self.backgrounded = False
@@ -77,32 +84,58 @@ class ProgressDialog(QDialog):
         header.addLayout(text_box, 1)
         layout.addLayout(header)
 
+        # Two bars, as WinRAR has always had them: the upper one is the file
+        # being worked on, the lower one the operation as a whole.  They are
+        # captioned, because two identical bars invite the assumption that one
+        # of them is broken.
         self.file_bar = QProgressBar()
         self.file_bar.setRange(0, 100)
-        layout.addWidget(self.file_bar)
+        layout.addLayout(_bar_row("Current file", self.file_bar))
 
         self.total_bar = QProgressBar()
         self.total_bar.setRange(0, 100)
-        layout.addWidget(self.total_bar)
+        layout.addLayout(_bar_row("Total", self.total_bar))
 
         stats = QGroupBox()
-        stats_form = QFormLayout(stats)
-        stats_form.setContentsMargins(10, 8, 10, 8)
-        stats_form.setSpacing(4)
+        grid = QGridLayout(stats)
+        grid.setContentsMargins(10, 8, 10, 8)
+        grid.setHorizontalSpacing(10)
+        grid.setVerticalSpacing(4)
         self.elapsed_label = QLabel("00:00:00")
         self.remaining_label = QLabel("--:--:--")
-        stats_form.addRow("Elapsed time", self.elapsed_label)
-        stats_form.addRow("Time left", self.remaining_label)
-        if total_bytes:
-            self.processed_label = QLabel("0 bytes")
-            stats_form.addRow("Processed", self.processed_label)
-        else:
-            self.processed_label = None
+        self.processed_label = QLabel("0%")
+        self.files_label = QLabel("-")
+        self.speed_label = QLabel("-")
+        self.ratio_label = QLabel("-")
+        for column, (caption, widget) in enumerate((
+            ("Elapsed time", self.elapsed_label),
+            ("Time left", self.remaining_label),
+        )):
+            grid.addWidget(_caption(caption), 0, column * 2)
+            grid.addWidget(widget, 0, column * 2 + 1)
+        for column, (caption, widget) in enumerate((
+            ("Processed", self.processed_label),
+            ("Files", self.files_label),
+        )):
+            grid.addWidget(_caption(caption), 1, column * 2)
+            grid.addWidget(widget, 1, column * 2 + 1)
+        grid.addWidget(_caption("Speed"), 2, 0)
+        grid.addWidget(self.speed_label, 2, 1)
+        self._ratio_caption = _caption("Compressed to")
+        grid.addWidget(self._ratio_caption, 2, 2)
+        grid.addWidget(self.ratio_label, 2, 3)
+        self._ratio_caption.setVisible(False)
+        self.ratio_label.setVisible(False)
+        grid.setColumnStretch(1, 1)
+        grid.setColumnStretch(3, 1)
         layout.addWidget(stats)
 
         buttons = QHBoxLayout()
         buttons.addStretch(1)
         self.background_button = QPushButton("Background")
+        self.background_button.setToolTip(
+            "Carry on in the background; LinRAR reports when it is done"
+        )
         self.background_button.clicked.connect(self._on_background)
         self.cancel_button = QPushButton("Cancel")
         self.cancel_button.clicked.connect(self._on_cancel)
@@ -113,6 +146,7 @@ class ProgressDialog(QDialog):
         task.fileChanged.connect(self._on_file)
         task.percentChanged.connect(self.file_bar.setValue)
         task.totalChanged.connect(self._on_total)
+        task.statsChanged.connect(self._on_stats)
         task.succeeded.connect(self._on_finished)
         task.failed.connect(self._on_finished)
         task.passwordNeeded.connect(self._on_finished)
@@ -123,6 +157,22 @@ class ProgressDialog(QDialog):
 
     # -- updates -----------------------------------------------------------
 
+    def watch_ratio(self, archive_path: str) -> None:
+        """Report how far the archive being written has squeezed its input.
+
+        WinRAR shows the ratio while it compresses rather than at the end, and
+        it is worked out the same way here: the size the archive has reached
+        against the bytes fed into it so far.
+        """
+        self._ratio_path = archive_path
+
+    def show_ratio(self, packed: int, original: int) -> None:
+        if original <= 0 or packed <= 0:
+            return
+        self._ratio_caption.setVisible(True)
+        self.ratio_label.setVisible(True)
+        self.ratio_label.setText(f"{int(round(packed * 100.0 / original))}%")
+
     def _on_file(self, name: str) -> None:
         metrics = self.file_label.fontMetrics()
         width = max(self.width() - 90, 200)
@@ -132,11 +182,31 @@ class ProgressDialog(QDialog):
 
     def _on_total(self, value: int) -> None:
         self.total_bar.setValue(value)
-        if self.processed_label is not None and self.total_bytes:
-            done = self.total_bytes * value / 100.0
+        # WinRAR puts the figure in the title bar so the taskbar entry carries
+        # it while the window is behind something else.
+        self.setWindowTitle(f"{value}%  {self.title}")
+        if not self.total_bytes:
+            self.processed_label.setText(f"{value}%")
+
+    def _on_stats(
+        self, files_done: int, files_total: int, bytes_done: int, bytes_total: int
+    ) -> None:
+        self._files_done = files_done
+        self._files_total = files_total
+        self._bytes_done = bytes_done
+        if bytes_total:
+            self.total_bytes = bytes_total
+        if self.total_bytes:
             self.processed_label.setText(
-                f"{format_size_short(done)} of {format_size_short(self.total_bytes)}"
+                f"{format_size_short(bytes_done)} of "
+                f"{format_size_short(self.total_bytes)}"
             )
+        else:
+            self.processed_label.setText(f"{self.total_bar.value()}%")
+        if files_total:
+            self.files_label.setText(f"{files_done} of {files_total}")
+        elif files_done:
+            self.files_label.setText(str(files_done))
 
     def _tick(self) -> None:
         elapsed = time.monotonic() - self._start
@@ -145,6 +215,15 @@ class ProgressDialog(QDialog):
         if percent > 2 and elapsed > 1.0:
             remaining = elapsed * (100 - percent) / percent
             self.remaining_label.setText(_clock(remaining))
+        if elapsed > 0.5 and self._bytes_done:
+            self.speed_label.setText(
+                f"{format_size_short(self._bytes_done / elapsed)}/s"
+            )
+        if self._ratio_path and self._bytes_done:
+            try:
+                self.show_ratio(os.path.getsize(self._ratio_path), self._bytes_done)
+            except OSError:
+                pass  # not created yet, or already moved into place
 
     # -- lifecycle ---------------------------------------------------------
 
@@ -199,6 +278,23 @@ class ProgressDialog(QDialog):
             self._on_cancel()
             return
         super().reject()
+
+
+def _caption(text: str) -> QLabel:
+    label = QLabel(text)
+    label.setObjectName("Hint")
+    return label
+
+
+def _bar_row(caption: str, bar: QProgressBar) -> QHBoxLayout:
+    """A progress bar with a fixed-width caption to its left."""
+    row = QHBoxLayout()
+    row.setSpacing(8)
+    label = _caption(caption)
+    label.setMinimumWidth(78)
+    row.addWidget(label, 0)
+    row.addWidget(bar, 1)
+    return row
 
 
 def _clock(seconds: float) -> str:

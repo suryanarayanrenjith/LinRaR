@@ -142,8 +142,12 @@ class ZipBackend(ArchiveBackend):
                     for item in archive.infolist()
                     if wanted is None or item.filename.rstrip("/") in wanted
                 ]
-                total = sum(i.file_size for i in members if not i.is_dir()) or 1
-                done = 0
+                # The reader knows every member's size up front, so the overall
+                # bar can be weighted properly from the first byte.
+                ctx.plan({
+                    item.filename: item.file_size
+                    for item in members if not item.is_dir()
+                })
 
                 for item in members:
                     if ctx.cancelled:
@@ -159,16 +163,14 @@ class ZipBackend(ArchiveBackend):
                         os.makedirs(target, exist_ok=True)
                         continue
 
-                    ctx.on_file(name)
+                    ctx.start_file(name)
                     if not self._should_write(target, item, options):
-                        done += item.file_size
-                        ctx.on_total(int(done * 100 / total))
+                        ctx.advance(100)
                         continue
 
                     if os.path.lexists(target):
                         if options.overwrite_mode is OverwriteMode.SKIP:
-                            done += item.file_size
-                            ctx.on_total(int(done * 100 / total))
+                            ctx.advance(100)
                             continue
                         if options.overwrite_mode is OverwriteMode.RENAME:
                             target = _unique_name(target)
@@ -187,13 +189,10 @@ class ZipBackend(ArchiveBackend):
                             os.symlink(link_target, target)
                         except OSError as exc:
                             ctx.on_message(f"Cannot create link {name}: {exc}")
-                        done += item.file_size
-                        ctx.on_total(int(done * 100 / total))
+                        ctx.advance(100)
                         continue
 
-                    done = self._extract_one(
-                        archive, item, target, ctx, done, total, options
-                    )
+                    self._extract_one(archive, item, target, ctx, options)
 
                     if mode & 0o777:
                         try:
@@ -232,10 +231,8 @@ class ZipBackend(ArchiveBackend):
         item: zipfile.ZipInfo,
         target: str,
         ctx: TaskContext,
-        done: int,
-        total: int,
         options: ExtractOptions,
-    ) -> int:
+    ) -> None:
         """Stream one member to disk, reporting per-file and overall progress."""
         written = 0
         try:
@@ -249,8 +246,7 @@ class ZipBackend(ArchiveBackend):
                     sink.write(chunk)
                     written += len(chunk)
                     if item.file_size:
-                        ctx.on_percent(int(written * 100 / item.file_size))
-                    ctx.on_total(int((done + written) * 100 / total))
+                        ctx.advance(int(written * 100 / item.file_size))
         except OperationError:
             if not options.keep_broken:
                 _silent_unlink(target)
@@ -259,8 +255,7 @@ class ZipBackend(ArchiveBackend):
             if not options.keep_broken:
                 _silent_unlink(target)
             raise
-        ctx.on_percent(100)
-        return done + item.file_size
+        ctx.advance(100)
 
     @staticmethod
     def _should_write(
@@ -314,16 +309,22 @@ class ZipBackend(ArchiveBackend):
                 if password:
                     archive.setpassword(password.encode("utf-8"))
                 members = [i for i in archive.infolist() if not i.is_dir()]
-                total = len(members) or 1
-                for index, item in enumerate(members):
+                ctx.plan({item.filename: item.file_size for item in members})
+                for item in members:
                     if ctx.cancelled:
                         raise OperationError("The operation was cancelled.")
-                    ctx.on_file(item.filename)
+                    ctx.start_file(item.filename)
+                    read = 0
                     with archive.open(item) as handle:
-                        while handle.read(256 * 1024):
-                            pass
-                    ctx.on_percent(100)
-                    ctx.on_total(int((index + 1) * 100 / total))
+                        while True:
+                            chunk = handle.read(256 * 1024)
+                            if not chunk:
+                                break
+                            read += len(chunk)
+                            if item.file_size:
+                                ctx.advance(int(read * 100 / item.file_size))
+                    ctx.advance(100)
+                ctx.finish()
         except NotImplementedError as exc:
             seven = self._sevenzip_fallback()
             if seven is not None:
@@ -401,8 +402,7 @@ class ZipBackend(ArchiveBackend):
                 item for key, item in existing.items() if key not in replaced
             ]
 
-        total = sum(size for _s, _a, size in plan) or 1
-        done = 0
+        ctx.plan({arcname: size for _s, arcname, size in plan})
 
         # Build the result beside the target and swap atomically, so a failure
         # part-way through never corrupts an archive being updated.
@@ -439,14 +439,13 @@ class ZipBackend(ArchiveBackend):
                 for source, arcname, size in plan:
                     if ctx.cancelled:
                         raise OperationError("The operation was cancelled.")
-                    ctx.on_file(arcname)
                     if os.path.isdir(source):
                         archive.write(source, arcname.rstrip("/") + "/")
                         continue
+                    ctx.start_file(arcname)
                     archive.write(source, arcname)
-                    done += size
-                    ctx.on_percent(100)
-                    ctx.on_total(int(done * 100 / total))
+                    ctx.advance(100)
+                ctx.finish()
             os.replace(temp_path, options.archive_path)
         except OSError as exc:
             _silent_unlink(temp_path)

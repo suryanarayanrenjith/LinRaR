@@ -135,6 +135,17 @@ DEFAULTS: dict[str, Any] = {
     # -- find --
     "find/mask": "*.*",
     "find/case_sensitive": False,
+    # -- updates: all off until the user asks, because checking for one is a
+    # network request they did not make.  An administrator can lock the group
+    # to settle the question for a whole machine.
+    "update/check_on_start": False,
+    "update/automatic": False,
+    "update/prereleases": False,
+    #: When the last check happened (ISO 8601), so a start-up check can be
+    #: rate limited rather than run on every launch.
+    "update/last_check": "",
+    #: A version the user pressed "Skip" on; never offered again.
+    "update/skipped": "",
     # -- tools: set these to run a rar/unrar/7z from somewhere unusual --
     "paths/rar": "",
     "paths/unrar": "",

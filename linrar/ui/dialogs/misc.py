@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 
 from PyQt6.QtCore import Qt, QUrl
-from PyQt6.QtGui import QDesktopServices, QFont
+from PyQt6.QtGui import QDesktopServices, QFont, QPixmap
 from PyQt6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -22,7 +22,9 @@ from PyQt6.QtWidgets import (
     QPlainTextEdit,
     QProgressBar,
     QPushButton,
+    QScrollArea,
     QSizePolicy,
+    QStackedWidget,
     QTabWidget,
     QTextBrowser,
     QTextEdit,
@@ -31,19 +33,23 @@ from PyQt6.QtWidgets import (
 )
 
 from ...core.models import ArchiveInfo, format_size, format_size_short
-from ...core import elevation, tools
+from ...core import elevation, filetypes, tools
 from ...core.registry import REGISTRY
 from ...core import settings as settings_module
 from ...core.settings import SETTINGS
+from ... import version as version_module
+from ...version import REPOSITORY_URL, __version__, describe
 from .. import icons, policy, theme
 
-APP_VERSION = "2.0.0"
+#: Kept under its old name because the whole interface says "APP_VERSION", but
+#: there is only one version now and it lives in linrar/version.py.
+APP_VERSION = __version__
 AUTHOR = "Surya"
 PORTFOLIO = "https://surya.is-a.dev/"
 #: LinRAR's own home on the web, and where its source lives.  Both are shown
 #: in About and are the two links the README points at.
 WEBSITE = "https://linrar.vercel.app/"
-REPOSITORY = "https://github.com/suryanarayanrenjith/LinRAR"
+REPOSITORY = REPOSITORY_URL
 
 
 class InfoDialog(QDialog):
@@ -146,27 +152,309 @@ class CommentDialog(QDialog):
 
 
 class ViewerDialog(QDialog):
-    """The built-in viewer for a single extracted file."""
+    """The built-in viewer, which tries to show the file rather than its bytes.
 
-    def __init__(self, parent, name: str, data: bytes) -> None:
+    A viewer that answers every file with a hex dump is a viewer nobody opens
+    twice.  This one asks :mod:`linrar.core.filetypes` what it is holding and
+    shows the most useful thing it can:
+
+    * **text and source** as text, in whatever encoding it turns out to be;
+    * **images** as images, scaled to fit;
+    * **Word, PowerPoint, Excel, OpenDocument and EPUB** as their text — those
+      are all ZIP containers full of XML, and the text can be lifted out of
+      them with nothing but the standard library;
+    * **archives** with an offer to open them in LinRAR proper;
+    * and everything genuinely opaque as a hex dump — but with the file named
+      and identified above it, and the desktop's own application one button
+      away, rather than as an unexplained wall of hex.
+
+    The raw bytes are always reachable through **View as hex**, because
+    sometimes the hex is exactly what somebody came for.
+    """
+
+    #: Past this, the text view is the wrong tool and says so rather than
+    #: locking the interface up laying out a hundred megabytes of one line.
+    MAX_TEXT = 8 * 1024 * 1024
+
+    def __init__(self, parent, name: str, data: bytes, path: str = "") -> None:
         super().__init__(parent)
         self.setWindowTitle(f"View - {name}")
         self.setWindowIcon(icons.icon("view"))
-        self.resize(700, 520)
+        self.resize(760, 560)
+
+        self.name = name
+        self.data = data
+        #: Where the file is on disk, when it is anywhere: an archive member
+        #: has been unpacked to a temporary folder by the time it gets here,
+        #: which is what makes "open with another application" possible.
+        self.path = path
+        self.file_type = filetypes.identify(name=name, data=data)
+        #: Set when the user asks for the archive to be opened; the main
+        #: window reads it after exec() returns.
+        self.open_as_archive = False
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(8, 8, 8, 8)
+        layout.setContentsMargins(10, 10, 10, 10)
+        layout.setSpacing(8)
+        layout.addLayout(self._header())
+        layout.addLayout(self._view_modes())
 
-        self.editor = QTextEdit()
-        self.editor.setReadOnly(True)
-        self.editor.setFont(QFont("monospace", 9))
-        self.editor.setLineWrapMode(QTextEdit.LineWrapMode.NoWrap)
-        self.editor.setPlainText(_as_text(data))
-        layout.addWidget(self.editor, 1)
+        self.pages = QStackedWidget()
+        self.text_view = self._text_view()
+        self.image_view, self.image_label = self._image_view()
+        self.pages.addWidget(self.text_view)
+        self.pages.addWidget(self.image_view)
+        layout.addWidget(self.pages, 1)
 
-        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
-        buttons.rejected.connect(self.reject)
-        layout.addWidget(buttons)
+        self.note = QLabel()
+        self.note.setObjectName("Hint")
+        self.note.setWordWrap(True)
+        self.note.setVisible(False)
+        layout.addWidget(self.note)
+
+        layout.addWidget(self._buttons())
+        self._show_best()
+
+    # -- construction ------------------------------------------------------
+
+    def _header(self) -> QHBoxLayout:
+        row = QHBoxLayout()
+        row.setSpacing(10)
+        icon = QLabel()
+        icon.setPixmap(icons.pixmap(_VIEWER_ICONS.get(self.file_type.kind,
+                                                      "file"), 32))
+        icon.setFixedSize(36, 36)
+        row.addWidget(icon, 0, Qt.AlignmentFlag.AlignTop)
+
+        text = QVBoxLayout()
+        text.setSpacing(1)
+        title = QLabel(self.name)
+        font = title.font()
+        font.setBold(True)
+        title.setFont(font)
+        title.setTextFormat(Qt.TextFormat.PlainText)
+        subtitle = QLabel(
+            f"{self.file_type.label} · {format_size_short(len(self.data))}"
+        )
+        subtitle.setObjectName("Hint")
+        text.addWidget(title)
+        text.addWidget(subtitle)
+        row.addLayout(text, 1)
+        return row
+
+    def _text_view(self) -> QPlainTextEdit:
+        view = QPlainTextEdit()
+        view.setReadOnly(True)
+        view.setFont(QFont("monospace", 9))
+        view.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
+        return view
+
+    def _image_view(self):
+        area = QScrollArea()
+        area.setWidgetResizable(True)
+        area.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        label = QLabel()
+        label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        area.setWidget(label)
+        return area, label
+
+    def _view_modes(self) -> QHBoxLayout:
+        """How to look at it, as distinct from what to do with it.
+
+        These are not dialog buttons and do not belong beside Close: they
+        change the view, the way a tab does.
+        """
+        row = QHBoxLayout()
+        row.setSpacing(4)
+        self.btn_text = QPushButton("View as &text")
+        self.btn_hex = QPushButton("View as he&x")
+        for button in (self.btn_text, self.btn_hex):
+            button.setFlat(True)
+            button.setCheckable(True)
+            row.addWidget(button)
+        self.btn_text.clicked.connect(self._show_text)
+        self.btn_hex.clicked.connect(self._show_hex)
+        row.addStretch(1)
+        return row
+
+    def _buttons(self) -> QDialogButtonBox:
+        box = QDialogButtonBox()
+        self.btn_open = box.addButton("&Open with...",
+                                      QDialogButtonBox.ButtonRole.ActionRole)
+        self.btn_archive = box.addButton("Open in &LinRAR",
+                                         QDialogButtonBox.ButtonRole.ActionRole)
+        self.btn_save = box.addButton("&Save a copy...",
+                                      QDialogButtonBox.ButtonRole.ActionRole)
+        close = box.addButton(QDialogButtonBox.StandardButton.Close)
+
+        self.btn_open.clicked.connect(self._open_externally)
+        self.btn_archive.clicked.connect(self._open_in_linrar)
+        self.btn_save.clicked.connect(self._save_as)
+        close.clicked.connect(self.reject)
+
+        self.btn_open.setIcon(icons.icon("view"))
+        self.btn_archive.setIcon(icons.icon("archive-small"))
+        self.btn_open.setEnabled(bool(self.path))
+        self.btn_archive.setVisible(
+            self.file_type.kind in (filetypes.Kind.ARCHIVE,
+                                    filetypes.Kind.DOCUMENT)
+            and bool(self.path)
+        )
+        return box
+
+    # -- deciding what to show --------------------------------------------
+
+    def _show_best(self) -> None:
+        """Show the most useful view this file has, and say so when there is none."""
+        kind = self.file_type.kind
+
+        if kind is filetypes.Kind.IMAGE and self._show_image():
+            return
+
+        if kind is filetypes.Kind.DOCUMENT:
+            text = filetypes.document_text(data=self.data)
+            if text:
+                self._mode(text=True)
+                self._set_text(text)
+                self._say(
+                    f"The text of this {self.file_type.label}. Formatting, "
+                    "images and layout are not shown — \"Open with...\" opens "
+                    "it in the application that owns it."
+                )
+                return
+
+        if kind is filetypes.Kind.PDF:
+            self._show_hex()
+            self._say(
+                "LinRAR does not render PDF pages. \"Open with...\" hands it "
+                "to your PDF reader; the bytes are shown here."
+            )
+            return
+
+        if kind is filetypes.Kind.ARCHIVE:
+            self._show_hex()
+            self._say(
+                f"This is {_article(self.file_type.label)}. "
+                "\"Open in LinRAR\" opens it as one."
+                if self.path else
+                f"This is {_article(self.file_type.label)}."
+            )
+            return
+
+        if self.file_type.viewable_as_text or filetypes._looks_textual(self.data):
+            self._show_text()
+            return
+
+        self._show_hex()
+        self._say(
+            f"There is nothing readable to show for {_article(self.file_type.label)}, "
+            "so its bytes are shown instead."
+            + (" \"Open with...\" hands it to the application that owns it."
+               if self.path else "")
+        )
+
+    def _show_image(self) -> bool:
+        pixmap = QPixmap()
+        if not pixmap.loadFromData(self.data) or pixmap.isNull():
+            return False
+        self._pixmap = pixmap
+        self._fit_image()
+        self.pages.setCurrentWidget(self.image_view)
+        self.btn_text.setChecked(False)
+        self.btn_hex.setChecked(False)
+        self._say(f"{pixmap.width()} × {pixmap.height()} pixels, "
+                  f"{self.file_type.label}")
+        return True
+
+    def _fit_image(self) -> None:
+        pixmap = getattr(self, "_pixmap", None)
+        if pixmap is None:
+            return
+        room = self.pages.size()
+        if pixmap.width() > room.width() or pixmap.height() > room.height():
+            pixmap = pixmap.scaled(
+                room, Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation,
+            )
+        self.image_label.setPixmap(pixmap)
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        if self.pages.currentWidget() is self.image_view:
+            self._fit_image()
+
+    def _set_text(self, text: str) -> None:
+        if len(text) > self.MAX_TEXT:
+            text = text[:self.MAX_TEXT] + "\n\n... (truncated)"
+        self.text_view.setPlainText(text)
+        self.pages.setCurrentWidget(self.text_view)
+
+    def _show_text(self) -> None:
+        self._mode(text=True)
+        if self.file_type.kind is filetypes.Kind.DOCUMENT:
+            extracted = filetypes.document_text(data=self.data)
+            if extracted:
+                self._set_text(extracted)
+                return
+        self._set_text(filetypes.decode(self.data))
+        self.note.setVisible(False)
+
+    def _show_hex(self) -> None:
+        self._mode(text=False)
+        self._set_text(filetypes.hex_dump(self.data))
+
+    def _mode(self, text: bool) -> None:
+        self.btn_text.setChecked(text)
+        self.btn_hex.setChecked(not text)
+
+    def _say(self, message: str) -> None:
+        self.note.setText(message)
+        self.note.setVisible(bool(message))
+
+    # -- the buttons -------------------------------------------------------
+
+    def _open_externally(self) -> None:
+        if not self.path:
+            return
+        if not QDesktopServices.openUrl(QUrl.fromLocalFile(self.path)):
+            QMessageBox.information(
+                self, "LinRAR",
+                f"No application on this system offered to open "
+                f"{os.path.basename(self.path)}.",
+            )
+
+    def _open_in_linrar(self) -> None:
+        self.open_as_archive = True
+        self.accept()
+
+    def _save_as(self) -> None:
+        target, _filter = QFileDialog.getSaveFileName(
+            self, "Save a copy", os.path.join(os.path.expanduser("~"), self.name)
+        )
+        if not target:
+            return
+        try:
+            with open(target, "wb") as handle:
+                handle.write(self.data)
+        except OSError as exc:
+            QMessageBox.warning(self, "LinRAR", f"Could not save it.\n\n{exc}")
+
+
+#: Which icon stands for each kind of file at the top of the viewer.
+_VIEWER_ICONS = {
+    filetypes.Kind.ARCHIVE: "archive",
+    filetypes.Kind.DOCUMENT: "info",
+    filetypes.Kind.PDF: "info",
+    filetypes.Kind.IMAGE: "view",
+    filetypes.Kind.TEXT: "comment",
+    filetypes.Kind.EXECUTABLE: "settings",
+}
+
+
+def _article(label: str) -> str:
+    """"a ZIP archive" / "an Ogg media file" — for a sentence, not a table."""
+    lowered = label[:1].lower() + label[1:]
+    return f"{'an' if lowered[:1] in 'aeiou' else 'a'} {lowered}"
 
 
 class FindDialog(QDialog):
@@ -315,11 +603,16 @@ class SettingsDialog(QDialog):
         compression_form.addRow("Default compression method", self.method_combo)
         layout.addWidget(compression)
 
+        layout.addWidget(self._updates_group())
+
         self.locked += policy.guard_all({
             "view/theme": self.theme_combo,
             "view/show_tree": self.tree_check,
             "view/show_hidden": self.hidden_check,
             "compression/method": self.method_combo,
+            "update/check_on_start": self.update_check,
+            "update/automatic": self.update_auto,
+            "update/prereleases": self.update_pre,
         })
         # The two toolbar checkboxes are one setting each, but Customize is the
         # full version of both: disable it only when neither can be changed.
@@ -330,6 +623,77 @@ class SettingsDialog(QDialog):
 
         layout.addStretch(1)
         return page
+
+    def _updates_group(self) -> QGroupBox:
+        """How LinRAR keeps itself current — off until it is asked.
+
+        Checking is a network request the user did not make, so nothing here
+        starts switched on, and an administrator can lock the whole ``update/``
+        group to settle it for a machine.
+        """
+        # Imported here, not at the top of the module: linrar.core.updater
+        # brings in urllib, and every launch of LinRAR would pay for it whether
+        # or not anybody ever opens Settings.  It also has to stay out of the
+        # import path that runs before the "this is not Linux" check, because
+        # urllib.request itself fails to import on a system that is not the one
+        # it was built for.
+        from ...core import updater
+
+        box = QGroupBox("Updates")
+        layout = QVBoxLayout(box)
+        layout.setSpacing(5)
+
+        self.update_check = QCheckBox("Check for updates when LinRAR starts")
+        self.update_check.setChecked(bool(SETTINGS.get("update/check_on_start")))
+        self.update_auto = QCheckBox(
+            "Download and install them automatically"
+        )
+        self.update_auto.setChecked(bool(SETTINGS.get("update/automatic")))
+        self.update_pre = QCheckBox("Include pre-release versions")
+        self.update_pre.setChecked(bool(SETTINGS.get("update/prereleases")))
+        # Installing automatically implies looking automatically; saying so by
+        # ticking the box is clearer than quietly meaning it.
+        self.update_auto.toggled.connect(
+            lambda on: on and self.update_check.setChecked(True)
+        )
+        for widget in (self.update_check, self.update_auto, self.update_pre):
+            layout.addWidget(widget)
+
+        state = QLabel(
+            f"This copy is LinRAR {version_module.describe()} "
+            f"({version_module.channel()})."
+        )
+        state.setObjectName("Hint")
+        state.setWordWrap(True)
+        layout.addWidget(state)
+
+        allowed = updater.eligibility()
+        if not allowed:
+            note = QLabel(f"{allowed.reason} {allowed.suggestion}")
+            note.setObjectName("Hint")
+            note.setWordWrap(True)
+            layout.addWidget(note)
+
+        check_now = QPushButton("Check for updates now...")
+        check_now.setIcon(icons.icon("download"))
+        check_now.clicked.connect(self._check_updates_now)
+        layout.addWidget(check_now, 0, Qt.AlignmentFlag.AlignLeft)
+        return box
+
+    def _check_updates_now(self) -> None:
+        # Saved first: a check started from here should honour the boxes as
+        # they are now, not as they were when the dialog opened.
+        self._save_updates()
+        SETTINGS.sync()
+        from .update import open_updater
+
+        open_updater(self)
+        self.update_check.setChecked(bool(SETTINGS.get("update/check_on_start")))
+
+    def _save_updates(self) -> None:
+        SETTINGS.set("update/check_on_start", self.update_check.isChecked())
+        SETTINGS.set("update/automatic", self.update_auto.isChecked())
+        SETTINGS.set("update/prereleases", self.update_pre.isChecked())
 
     def _paths_tab(self) -> QWidget:
         page = QWidget()
@@ -595,6 +959,7 @@ class SettingsDialog(QDialog):
         )
         SETTINGS.set("view/show_hidden", self.hidden_check.isChecked())
         SETTINGS.set("compression/method", self.method_combo.currentIndex())
+        self._save_updates()
         SETTINGS.set("admin/method", self.elevation_combo.currentData())
         for key, edit in self.path_edits.items():
             SETTINGS.set(f"paths/{key}", edit.text().strip())
@@ -628,7 +993,7 @@ class AboutDialog(QDialog):
             "<div style='font-size:15pt; font-weight:bold'>LinRAR "
             "<span style='font-weight:normal'>for Linux</span></div>"
             f"<div style='color:{colors.text_dim}; margin-top:2px'>"
-            f"Version {APP_VERSION} &nbsp;·&nbsp; PyQt6</div>"
+            f"Version {describe()} &nbsp;·&nbsp; PyQt6</div>"
             "<div style='margin-top:9px'>A native Linux archive manager with "
             "the classic WinRAR interface, built on top of the <b>rar</b>, "
             "<b>unrar</b> and <b>7z</b> command line tools.</div>"
@@ -1052,21 +1417,3 @@ def _wrapped(text: str) -> QLabel:
     return label
 
 
-def _as_text(data: bytes) -> str:
-    """Render a member for the viewer, falling back to a hex dump if binary."""
-    for encoding in ("utf-8", "latin-1"):
-        try:
-            text = data.decode(encoding)
-        except UnicodeDecodeError:
-            continue
-        if "\x00" not in text[:4096]:
-            return text
-    lines = []
-    for offset in range(0, min(len(data), 64 * 1024), 16):
-        chunk = data[offset : offset + 16]
-        hex_part = " ".join(f"{b:02X}" for b in chunk).ljust(47)
-        ascii_part = "".join(chr(b) if 32 <= b < 127 else "." for b in chunk)
-        lines.append(f"{offset:08X}  {hex_part}  {ascii_part}")
-    if len(data) > 64 * 1024:
-        lines.append("... (truncated)")
-    return "\n".join(lines)

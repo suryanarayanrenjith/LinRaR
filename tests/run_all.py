@@ -23,6 +23,9 @@ ROOT = os.path.dirname(HERE)
 
 #: Slowest last: the backend suites shell out to rar/unrar many times.
 ORDER = [
+    "test_version.py",
+    "test_platform.py",
+    "test_filetypes.py",
     "test_parsing.py",
     "test_theme.py",
     "test_customize.py",
@@ -30,6 +33,8 @@ ORDER = [
     "test_config.py",
     "test_diagnose.py",
     "test_cli.py",
+    "test_progress.py",
+    "test_updater.py",
     "test_ui.py",
     "test_dialog.py",
     "test_navigation.py",
