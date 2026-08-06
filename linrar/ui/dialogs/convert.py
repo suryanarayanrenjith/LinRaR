@@ -44,7 +44,6 @@ class ConvertDialog(QDialog):
         self.setWindowIcon(icons.icon("convert"))
         self.resize(640, 520)
 
-        self._results: list[ConvertResult] = []
         self._task: Optional[Task] = None
 
         layout = QVBoxLayout(self)

@@ -10,8 +10,8 @@ Clone it, run one script, and you have the classic WinRAR interface: the same
 dialogs, the same keyboard shortcuts, the same right-click menu, running
 natively on your desktop.
 
-**[linrar.vercel.app](https://linrar.vercel.app/)** &nbsp;·&nbsp;
-[Source](https://github.com/suryanarayanrenjith/LinRAR) &nbsp;·&nbsp;
+**[linrar.vercel.app](https://linrar.vercel.app/)** &nbsp;|&nbsp;
+[Source](https://github.com/suryanarayanrenjith/LinRAR) &nbsp;|&nbsp;
 [Documentation](docs/USAGE.md)
 
 [![tests](https://github.com/suryanarayanrenjith/LinRAR/actions/workflows/tests.yml/badge.svg)](https://github.com/suryanarayanrenjith/LinRAR/actions/workflows/tests.yml)
@@ -35,11 +35,11 @@ natively on your desktop.
 <table>
 <tr>
 <td width="50%"><img src="docs/images/main-light.png" alt="LinRAR in the light theme"></td>
-<td width="50%"><img src="docs/images/main-dark.png" alt="LinRAR in the dark theme"></td>
+<td width="50%"><img src="docs/images/main-themed.png" alt="LinRAR in the Midnight Neon theme"></td>
 </tr>
 <tr>
-<td align="center"><em>Light theme</em></td>
-<td align="center"><em>Dark theme</em></td>
+<td align="center"><em>The light theme, drawn into LinRAR itself</em></td>
+<td align="center"><em>Midnight Neon, one of ten you can download</em></td>
 </tr>
 </table>
 
@@ -57,6 +57,7 @@ native WinRAR GUI. LinRAR is that GUI, built with PyQt6 on top of `rar`,
 - [Setting up the tools](#setting-up-the-tools): **start here after installing**
 - [What it does](#what-it-does)
 - [Right-click menu and command line](#right-click-menu-and-command-line)
+- [Requirements](#requirements)
 - [Documentation](#documentation)
 - [Links](#links)
 
@@ -95,7 +96,7 @@ $ echo $?
 ### Architectures
 
 **Any Linux your distribution builds Python and Qt for**, which in practice is
-all of them — x86-64, ARM, RISC-V, POWER, s390x, LoongArch and the rest. LinRAR
+all of them: x86-64, ARM, RISC-V, POWER, s390x, LoongArch and the rest. LinRAR
 itself is architecture-neutral, and `unrar`, `7z`, `zip` and `mksquashfs` are
 open source and packaged everywhere.
 
@@ -103,7 +104,7 @@ Two things are not, and LinRAR says so plainly rather than failing oddly:
 
 | | Published for | Elsewhere |
 |---|---|---|
-| **`rar`**, the only thing that can *write* a RAR archive — shareware, shipped as a binary by RARLAB | x86-64, x86, ARM64, ARM32 | Dependencies shows **Not available here** with the reason. Reading and extracting every format still works; only creating `.rar` needs it |
+| **`rar`**, the only thing that can *write* a RAR archive: shareware, shipped as a binary by RARLAB | x86-64, x86, ARM64, ARM32 | Dependencies shows **Not available here** with the reason. Reading and extracting every format still works; only creating `.rar` needs it |
 | **The AppImage runtime** used for self-extracting archives | x86-64, x86, ARM64, ARM32 | Building an AppImage refuses with an explanation and points at the **RAR `.sfx` stub**, which is a shell script and runs anywhere |
 
 `install.sh` names the machine as it goes, warns once if `rar` has no build for
@@ -128,7 +129,7 @@ That is the whole setup. The installer creates the virtual environment,
 installs the command line tools LinRAR drives (asking for your password once),
 puts a `linrar` launcher on your `PATH`, installs the icon at nine sizes, adds
 LinRAR to the application menu, registers it as the handler for archive files,
-wires **Extract here / Extract to… / Add to archive…** into your file manager's
+wires **Extract here / Extract to... / Add to archive...** into your file manager's
 right-click menu, and finishes by starting the app once to prove it works.
 
 ```bash
@@ -167,7 +168,7 @@ tar xf linrar-*.tar.gz && cd linrar-*/ && ./install.sh
 ```
 
 The tarball is the same tree a clone gives you, plus a stamp recording which
-commit it was built from — so `linrar --version` can tell a published release
+commit it was built from, so `linrar --version` can tell a published release
 from a working copy that happens to carry the same number. Releases are
 numbered by [Semantic Versioning](docs/VERSIONING.md) and each one publishes a
 `latest.json` describing itself, which is what an update checker reads.
@@ -209,7 +210,7 @@ one button a new user needs:
 </div>
 
 It turns **red, with a warning badge**, whenever something required is missing,
-and its tooltip names what. You will also find it under **Tools →
+and its tooltip names what. You will also find it under **Tools >
 Dependencies**.
 
 ### What you are looking at
@@ -232,7 +233,7 @@ Status reads:
 | **Installed** (green) | found and working; the version and path are shown |
 | **Missing** (red) | a required component; some things simply will not work |
 | **Not installed** (amber) | optional; the features it powers are unavailable |
-| **Not available here** (grey) | nobody publishes it for this architecture — see [Architectures](#architectures) |
+| **Not available here** (grey) | nobody publishes it for this architecture: see [Architectures](#architectures) |
 
 Selecting a row explains what that component does, plus anything specific to
 your distribution: that `rar` lives in *multiverse* on Ubuntu, in *RPM Fusion*
@@ -274,7 +275,7 @@ one of the required ones.
 
 `rar` is shareware and is not in every repository. If **Install** cannot find
 it, install RARLAB's own build anywhere on your system and point LinRAR at it
-in **Settings → Tools and system**:
+in **Settings > Tools and system**:
 
 <div align="center">
 <img src="docs/images/tools-settings.png" width="60%" alt="Settings, Tools and system tab">
@@ -285,7 +286,7 @@ keeps searching for itself: your `PATH` first, then `/usr/local/bin`,
 `/opt/rar`, `/opt/bin`, `~/.local/bin`, `~/bin`, `/snap/bin` and the Flatpak
 and Nix profile directories, under every name these tools ship with (`7z`,
 `7zz`, `7za`, `7zr`, `unrar`, `unrar-nonfree`, `unrar-free`), so an unusual
-packaging choice is not a dead end. Type a path, or **Browse…**, to pin one
+packaging choice is not a dead end. Type a path, or **Browse...**, to pin one
 specific binary; **Re-scan** picks up anything you installed outside LinRAR
 without restarting it.
 
@@ -297,7 +298,7 @@ are kept.
 ## What it does
 
 **Browsing**: browse the filesystem, step *into* an archive and keep browsing.
-Folder tree, address bar, Back and Forward (`Alt+←` / `Alt+→`), sortable
+Folder tree, address bar, Back and Forward (`Alt+Left` / `Alt+Right`), sortable
 columns, five view modes, column chooser, comment pane, favourites, recently
 opened archives, find, drag and drop both ways. Stepping out of a folder
 leaves the cursor on it, the tree keeps the branches you opened, `Ctrl+L` puts
@@ -322,20 +323,20 @@ file names, exclusion masks, comments and saved profiles.
 **Self-extracting archives, in one step.** Tick **Create SFX archive** in the
 Add dialog and choose the kind right beside it: an **AppImage** (one
 executable that unpacks itself on any Linux machine, the counterpart of
-WinRAR's self-extracting `.exe`) or rar's smaller **`.sfx` stub**. **Options…**
+WinRAR's self-extracting `.exe`) or rar's smaller **`.sfx` stub**. **Options...**
 opens the full SFX module: destination, commands to run before and after,
 silent mode, overwrite policy, window title, icon, a licence to accept, and a
 desktop menu entry. An existing archive is converted the same way from
-**Commands → Convert archive to SFX**, which offers both formats in the same
+**Commands > Convert archive to SFX**, which offers both formats in the same
 dialog.
 
 **Extraction**: the full *Extraction path and options* dialog, with WinRAR's
-*Confirm file replace* prompt. Extracting never moves the browser — the window
+*Confirm file replace* prompt. Extracting never moves the browser; the window
 stays where it is while the files land beside the archive. Extracting into a
 folder you do not own asks for administrator rights and stages the files,
 rather than running the archive tool as root.
 
-**Progress**: two bars that mean two different things, as WinRAR's do — the
+**Progress**: two bars that mean two different things, as WinRAR's do: the
 current file above, the whole job below, weighted by **bytes** rather than by
 file count. With elapsed time, time left, bytes processed, the file count, the
 speed, the live compression figure, and the percentage in the window title.
@@ -347,9 +348,9 @@ lives in exactly one menu, in WinRAR's arrangement: **Commands** for what is
 done to an archive, **Tools** for what is done in bulk or to LinRAR itself.
 
 **Find, by name or by what is inside** (`Ctrl+F`). A file-name mask filters
-the list in place. Add some text and LinRAR reads the matching files — through
+the list in place. Add some text and LinRAR reads the matching files, through
 the current folder and everything under it, or through the whole of the open
-archive — and lists every line that contains it, grouped by file, with line
+archive, and lists every line that contains it, grouped by file, with line
 numbers and a button that takes the window to any of them.
 
 **Checksums** (`Ctrl+K`): CRC32, MD5, SHA-1, SHA-256 and SHA-512 for the
@@ -357,16 +358,44 @@ selected files, on disk or inside an archive, all from one pass over the
 bytes. Paste a published checksum and it names the file that matches it; the
 result saves in the exact `sha256sum` layout.
 
-**Saved passwords that are actually used.** *Tools → Organize passwords* holds
+**Saved passwords that are actually used.** *Tools > Organize passwords* holds
 passwords against file-name masks, and an archive that one of them opens never
 asks. The prompt itself has a **Remember this password** box.
 
-**Drag files out**, into any file manager — including out of an open archive,
+**Drag files out**, into any file manager, including out of an open archive,
 which unpacks them on the way and keeps a selected folder whole.
 
-**Themes and customization.** A light and a dark theme drawn by LinRAR itself,
-a toolbar you choose the contents and order of, five file-list views, and a
-layout you can rearrange. Everything is remembered between launches.
+**Themes.** Light and dark are drawn into LinRAR itself; **ten more are a
+download away**, and any number of your own after that. A theme is not a tint:
+it restyles every surface, edge and gradient, sets the corner radii and the font,
+and redraws all thirty-nine icons in its own colours and one of four styles.
+
+One button opens the lot: the palette in the menu bar's corner, **Options >
+Themes...**, or `Ctrl+Shift+M`. Every theme is previewed as a **working
+miniature of the window** before you apply it, **dragging a file onto that window
+installs it**, and one that will not load is listed with the line to fix and the
+JSON to paste instead, rather than quietly not appearing.
+
+- **[linrar.vercel.app/themes](https://linrar.vercel.app/themes)**: ten to
+  download, previewed in full.
+- **[linrar.vercel.app/create](https://linrar.vercel.app/create)**: the builder.
+  Pick a dozen colours and it derives the other eighty, draws the icon set, warns
+  you about anything unreadable, and hands you the file.
+
+**Customization.** A toolbar you choose the contents and order of from 38
+commands, five file-list views, and a layout you can rearrange. Everything is
+remembered between launches.
+
+<table>
+<tr>
+<td width="58%" valign="top"><img src="docs/images/themes.png" alt="The Themes window, previewing Midnight Neon"></td>
+<td width="42%" valign="top"><img src="docs/images/themes-fixing.png" alt="A theme that will not load, with what to fix"></td>
+</tr>
+<tr>
+<td align="center" valign="top"><em>Themes: every one previewed as a working miniature of the window</em></td>
+<td align="center" valign="top"><em>A theme that will not load says which line, and what to write instead</em></td>
+</tr>
+</table>
 
 <table>
 <tr>
@@ -387,7 +416,7 @@ Full tour and keyboard shortcuts: [docs/USAGE.md](docs/USAGE.md).
 
 After installing, archives get LinRAR entries in **Dolphin, Konqueror, Nemo,
 Nautilus, Caja, Thunar, PCManFM, PCManFM-Qt, SpaceFM, Pantheon Files, Deepin's
-file manager and Krusader** — ten families through six different formats, all
+file manager and Krusader**: ten families through six different formats, all
 of them written by `install.sh` and all reversed by `uninstall.sh`. They call
 the same command line, which you can use directly.
 **Every action has a short form as well as the long one**; the long forms are
@@ -445,10 +474,10 @@ can really open, so it works in a script:
 
 ```console
 $ linrar -i download.rar
-“download.rar” is not an archive LinRAR can open.
+"download.rar" is not an archive LinRAR can open.
 
 LinRAR read the start of the file and it is an HTML document. The name ends in
-“.rar”, but the contents do not match, so the file has been renamed, is a
+".rar", but the contents do not match, so the file has been renamed, is a
 different kind of file altogether, or was damaged in transit.
 ...
 ```
@@ -484,6 +513,7 @@ needs nothing at all: it is handled in-process by Python.
 |---|---|
 | [docs/INSTALL.md](docs/INSTALL.md) | installing, distributions, file-manager integration, troubleshooting |
 | [docs/USAGE.md](docs/USAGE.md) | everything the app does, shortcuts, customization, command line |
+| [docs/THEMES.md](docs/THEMES.md) | where themes live, and the format, if you want to write one by hand |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | how it works inside, and the traps worth knowing about |
 | [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) | running from source, the test suite, project layout |
 | [CHANGELOG.md](CHANGELOG.md) | what changed |
@@ -498,7 +528,7 @@ needs nothing at all: it is handled in-process by Python.
 | **Source code and issues** | [github.com/suryanarayanrenjith/LinRAR](https://github.com/suryanarayanrenjith/LinRAR) |
 | **Author** | Surya ([surya.is-a.dev](https://surya.is-a.dev/)) |
 
-All three are in the application too, under **Help → About LinRAR**.
+All three are in the application too, under **Help > About LinRAR**.
 
 ---
 

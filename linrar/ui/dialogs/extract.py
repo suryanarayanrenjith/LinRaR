@@ -296,10 +296,10 @@ class ExtractDialog(QDialog):
             "Extraction path and options\n\n"
             "Type a destination folder or pick one from the tree, then press "
             "OK.\n\n"
-            "• Update mode decides which files are written.\n"
-            "• Overwrite mode decides what happens when a file already "
+            "- Update mode decides which files are written.\n"
+            "- Overwrite mode decides what happens when a file already "
             "exists.\n"
-            "• 'Extract archives to subfolders' puts the contents into a "
+            "- 'Extract archives to subfolders' puts the contents into a "
             "folder named after the archive.",
         )
 

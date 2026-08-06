@@ -1,7 +1,7 @@
 """The results of a text search: what was found, and where.
 
 Find has two answers, and they want different windows.  A name mask filters
-the listing in place — the file list is already the right shape for that.  A
+the listing in place; the file list is already the right shape for that.  A
 text search produces something the listing cannot show at all: several hits
 inside one file, each with its line.  So it gets a window of its own, grouped
 by file, with the file names it found ready to act on.
@@ -9,7 +9,6 @@ by file, with the file names it found ready to act on.
 
 from __future__ import annotations
 
-import os
 
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QFont
@@ -102,12 +101,12 @@ class SearchResultsDialog(QDialog):
 
         if not hits:
             text = (
-                f"No file in {where} contains “{self.query.text}”.\n"
+                f"No file in {where} contains '{self.query.text}'.\n"
                 f"{self.result.searched} file(s) were read."
             )
         else:
             text = (
-                f"“{self.query.text}” found {hits} time(s) in {files} file(s), "
+                f"'{self.query.text}' found {hits} time(s) in {files} file(s), "
                 f"out of {self.result.searched} read in {where}."
             )
         if skipped:
@@ -197,13 +196,6 @@ def result_summary(result: SearchResult, query: SearchQuery) -> str:
         return f"'{query.text}' was not found in any of the files searched"
     return (
         f"'{query.text}' found in {files} file(s)"
-        + (" — search stopped early" if result.cancelled else "")
+        + (": search stopped early" if result.cancelled else "")
     )
 
-
-def relative_display(path: str, base: str) -> str:
-    """A found path shown against the folder the search started from."""
-    try:
-        return os.path.relpath(path, base)
-    except ValueError:
-        return path

@@ -161,7 +161,6 @@ for pattern in (".venv/", ".install-manifest", "__pycache__/"):
     check(f".gitignore covers {pattern}", pattern in gitignore)
 
 print("== the tools tab")
-from PyQt6.QtWidgets import QApplication as _QApp
 from linrar.ui.main_window import MainWindow
 from linrar.ui.dialogs.misc import SettingsDialog
 

@@ -5,11 +5,11 @@ name: release
 # The trigger is the version number itself.  Every push to main is inspected:
 # if __version__ in linrar/version.py names a version that has no tag yet, that
 # version is tested, packaged and published, and if it does not, this workflow
-# does nothing and says so.  So releasing is one commit —
+# does nothing and says so.  So releasing is one commit,
 #
 #     tools/release.py bump patch && git commit -am "release 2.0.1" && git push
 #
-# — and an ordinary change to the code is never mistaken for one.  Running the
+# and an ordinary change to the code is never mistaken for one.  Running the
 # workflow by hand with a "bump" can do that commit for you as well.
 #
 # Nothing is published that has not passed the full suite in tests.yml first,
@@ -28,7 +28,7 @@ on:
         options: [none, patch, minor, major]
         default: none
       pre:
-        description: "Pre-release label, e.g. rc — empty for a final release"
+        description: "Pre-release label, e.g. rc: empty for a final release"
         type: string
         default: ""
       dry-run:
@@ -118,10 +118,10 @@ jobs:
 
           if git rev-parse -q --verify "refs/tags/${tag}" >/dev/null; then
             release=false
-            reason="${tag} already exists — nothing to release."
+            reason="${tag} already exists, nothing to release."
           else
             release=true
-            reason="${version} has no tag yet — this push will be released as ${tag}."
+            reason="${version} has no tag yet; this push will be released as ${tag}."
           fi
 
           {
@@ -172,7 +172,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          # The exact commit the plan looked at — main may have moved on, and
+          # The exact commit the plan looked at; main may have moved on, and
           # a release must be of the thing that was tested.
           ref: ${{ needs.plan.outputs.sha }}
           fetch-depth: 0
@@ -299,7 +299,7 @@ jobs:
           {
             echo
             echo "\`${TAG}\` is already published, so this push changed code "
-            echo "without changing the version — which is the normal case."
+            echo "without changing the version, which is the normal case."
             echo
             echo "To release what is on main now:"
             echo

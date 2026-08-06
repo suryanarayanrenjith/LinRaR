@@ -49,7 +49,7 @@ def _check_tools(window: MainWindow) -> None:
         window.cmd_dependencies()
 
 
-USAGE = """LinRAR for Linux — a WinRAR-style archive manager.
+USAGE = """LinRAR for Linux: a WinRAR-style archive manager.
 
 Usage:
   linrar [FILE|FOLDER]              open an archive, or browse a folder
@@ -101,9 +101,6 @@ _ALIASES: dict[str, str] = {
     short: long
     for long, short in list(ACTION_FLAGS.items()) + list(QUERY_FLAGS.items())
 }
-
-#: Kept for callers that used to read it; the parser works from the table.
-_ACTIONS = tuple(ACTION_FLAGS)
 
 
 @dataclass

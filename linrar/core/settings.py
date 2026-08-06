@@ -10,7 +10,9 @@ written to a single file and read back on the next launch:
 The path is fixed rather than left to Qt so it is the same on every desktop and
 distribution, and so it can be quoted in the UI and in the documentation.
 Settings written by earlier versions, which used Qt's own location, are
-imported once on first run.
+imported once on first run.  The file is kept at mode 0600 and its directory at
+0700: it records the folders this user has been in, the archives they opened
+and, where no keyring is reachable, the saved archive passwords.
 
 A value is looked up through three layers, each one overriding the one before:
 
@@ -51,7 +53,7 @@ LEGACY_ORG = "LinRAR-Linux"
 LEGACY_APP = "LinRAR"
 
 #: Bumped when a release needs to convert or drop stored keys.
-CONFIG_VERSION = 2
+CONFIG_VERSION = 3
 
 #: Keys that changed name, old -> new.
 #:
@@ -71,6 +73,8 @@ RENAMED: dict[str, str] = {
     "view/toolbar_text": "",
     "view/large_icons": "",
     "view/details": "",
+    # Never read by anything: compression profiles live under "profiles/list".
+    "compression/profile": "",
 }
 
 #: Toolbar buttons as they ship, "|" being a separator.  The Customize dialog
@@ -111,7 +115,6 @@ DEFAULTS: dict[str, Any] = {
     "compression/method": 3,
     "compression/format": "RAR",
     "compression/dictionary": "",
-    "compression/profile": "Default",
     "compression/update_mode": "add_replace",
     "compression/solid": False,
     "compression/recovery": False,
@@ -177,7 +180,6 @@ SYSTEM_EXCLUDED_GROUPS = ("meta/", "geometry/")
 #: Keys inside a system file that steer the policy instead of being settings.
 POLICY_LOCKED = "policy/locked"      #: list of key patterns the user may not change
 POLICY_LOCK_ALL = "policy/lock_all"  #: lock every key the system file sets
-POLICY_KEYS = (POLICY_LOCKED, POLICY_LOCK_ALL)
 
 
 def config_dir() -> str:
@@ -206,6 +208,23 @@ def system_config_paths() -> list[str]:
             sorted(glob.glob(os.path.join(SYSTEM_CONFIG_DIR, DROPIN_DIR, "*.conf")))
         )
     return [path for path in candidates if path and os.path.isfile(path)]
+
+
+def _restrict(path: str) -> None:
+    """Make *path* readable only by its owner, if it exists.
+
+    The user's own file records where they have been, what they have opened,
+    and (when no keyring is reachable) the saved archive passwords.  Qt writes
+    it with the process umask, which on most distributions leaves it
+    world-readable; on a shared machine that hands the lot to everybody with
+    an account.  Tightened every time it is written, because a fresh file, a
+    migration and a reset each create it anew.
+    """
+    try:
+        if os.path.isfile(path) and (os.stat(path).st_mode & 0o077):
+            os.chmod(path, 0o600)
+    except OSError:
+        pass
 
 
 def _as_list(raw: Any) -> list[str]:
@@ -337,13 +356,14 @@ class Settings:
     ) -> None:
         self.path = path or config_path()
         try:
-            os.makedirs(os.path.dirname(self.path), exist_ok=True)
+            os.makedirs(os.path.dirname(self.path), mode=0o700, exist_ok=True)
         except OSError:
             pass
         self.system = (
             system if isinstance(system, SystemConfig) else SystemConfig(system)
         )
         self._store = QSettings(self.path, QSettings.Format.IniFormat)
+        _restrict(self.path)
         self._migrate()
 
     # -- lifecycle ---------------------------------------------------------
@@ -378,7 +398,7 @@ class Settings:
         self._store.clear()
         for key, value in values.items():
             self._store.setValue(key, value)
-        self._store.sync()
+        self.sync()
 
     def reset_all(self) -> None:
         """Forget everything the user chose.
@@ -389,11 +409,7 @@ class Settings:
         """
         self._store.clear()
         self._store.setValue("meta/config_version", CONFIG_VERSION)
-        self._store.sync()
-
-    def reload_system(self) -> None:
-        """Re-read the system-wide files, after an administrator edits them."""
-        self.system = SystemConfig(self.system.requested)
+        self.sync()
 
     # -- values ------------------------------------------------------------
 
@@ -512,12 +528,13 @@ class Settings:
             shown = ", ".join(str(v) for v in value) if isinstance(value, list) \
                 else str(value)
             if len(shown) > 20:
-                shown = shown[:19] + "…"
+                shown = shown[:19] + "..."
             lines.append(f"  {key:<30} {shown:<20} {origin}")
         return "\n".join(lines)
 
     def sync(self) -> None:
         self._store.sync()
+        _restrict(self.path)
 
     def keys(self) -> list[str]:
         return list(self._store.allKeys())

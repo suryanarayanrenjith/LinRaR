@@ -257,7 +257,7 @@ class PasswordManagerDialog(QDialog):
         """Say where the passwords really are, including after a demotion.
 
         The store falls back to LinRAR's own file when the keyring turns out
-        not to work — a machine with ``secret-tool`` installed and no service
+        not to work: a machine with ``secret-tool`` installed and no service
         behind it is common enough (headless boxes, minimal desktops,
         containers) and used to swallow every password saved.  Falling back
         silently would only trade one lie for another.

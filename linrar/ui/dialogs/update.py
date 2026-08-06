@@ -13,12 +13,13 @@ widgets; this module is the part that watches.
 
 from __future__ import annotations
 
+import html
 import os
 import time
 from typing import Optional
 
 from PyQt6.QtCore import Qt, QProcess, QTimer, pyqtSignal
-from PyQt6.QtGui import QFont
+from PyQt6.QtGui import QDesktopServices, QFont
 from PyQt6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -43,7 +44,7 @@ from ...core import updater
 from ...core.models import format_size_short
 from ...core.settings import SETTINGS
 from ...core.tasks import UpdateTask
-from ...core.updater import Update, UpdateError
+from ...core.updater import Update
 from ... import version as versions
 from .. import icons, policy, theme
 
@@ -148,7 +149,7 @@ class UpdateDialog(QDialog):
     One window for the whole business: it checks, reports, offers, downloads,
     installs and then asks to restart, rather than handing the user from dialog
     to dialog.  *auto_install* is what the start-up check passes when the user
-    has asked for updates to be installed on their own — the window still
+    has asked for updates to be installed on their own; the window still
     appears and still shows every stage, because "automatic" means "without
     being asked", not "without being told".
     """
@@ -166,7 +167,6 @@ class UpdateDialog(QDialog):
         self.auto_install = auto_install
         self.update: Optional[Update] = None
         self.task: Optional[UpdateTask] = None
-        self.backup_path = ""
         self._installing = False
         self._finished = False
         self._log: list[str] = []
@@ -311,7 +311,13 @@ class UpdateDialog(QDialog):
         layout.addWidget(self.facts_box)
 
         self.notes = QTextBrowser()
-        self.notes.setOpenExternalLinks(True)
+        # The notes come off the network, so links in them are not followed
+        # blindly: setOpenExternalLinks would hand any scheme at all straight
+        # to the desktop, and "javascript:" or "file:" in a release note is a
+        # trick, not a link.  _open_link decides instead.
+        self.notes.setOpenExternalLinks(False)
+        self.notes.setOpenLinks(False)
+        self.notes.anchorClicked.connect(self._open_link)
         self.notes.setMinimumHeight(180)
         layout.addWidget(self.notes, 1)
 
@@ -510,12 +516,22 @@ class UpdateDialog(QDialog):
             self.notes.setMarkdown(
                 f"## What changed in {found.version}\n\n{found.notes}"
             )
-        else:
-            self.notes.setHtml(
-                f"<p style='color:{colors.text_dim}'>This release came with no "
-                f"notes. See <a href='{found.release_url}'>the release page</a>."
-                "</p>"
-            )
+            return
+        # Everything from the manifest is escaped: a release_url carrying a
+        # quote and a tag of its own would otherwise write its own markup into
+        # this pane.
+        link = html.escape(found.release_url, quote=True)
+        self.notes.setHtml(
+            f"<p style='color:{colors.text_dim}'>This release came with no "
+            f'notes. See <a href="{link}">the release page</a>.</p>'
+        )
+
+    def _open_link(self, url) -> None:
+        """Open a link from the release notes, if it is one worth opening."""
+        if url.scheme().lower() in ("http", "https"):
+            QDesktopServices.openUrl(url)
+            return
+        self._log_line(f"Ignored a link the notes offered: {url.toString()}")
 
     # -- installing --------------------------------------------------------
 
@@ -594,7 +610,6 @@ class UpdateDialog(QDialog):
         self.task = None
         self._installing = False
         self._finished = True
-        self.backup_path = backup
         version = self.update.version if self.update else ""
         self.stages.finish()
         self.overall_bar.setValue(100)
@@ -612,7 +627,7 @@ class UpdateDialog(QDialog):
             f"The previous version was kept at {backup}"
             if backup else
             "The old version's files were removed and the download cache "
-            "cleared — nothing was left behind."
+            "cleared, nothing was left behind."
         )
         self._show_page(self.page_done)
         self._set_buttons(restart=True, close=True)
@@ -664,11 +679,20 @@ class UpdateDialog(QDialog):
         self.accept()
 
     def _open_release_page(self) -> None:
-        from PyQt6.QtGui import QDesktopServices
+        """Open the release page, but only when the manifest named a web one.
+
+        ``release_url`` arrives over the network like everything else in the
+        manifest, and a button that hands whatever it says to the desktop is a
+        button that will eventually be asked to run something.
+        """
         from PyQt6.QtCore import QUrl
 
         target = self.update.release_url if self.update else versions.RELEASES_URL
-        QDesktopServices.openUrl(QUrl(target))
+        url = QUrl(target)
+        if url.scheme().lower() not in ("http", "https"):
+            self._log_line(f"Not opening {target}: only web pages are followed.")
+            url = QUrl(versions.RELEASES_URL)
+        QDesktopServices.openUrl(url)
 
     def _restart(self) -> None:
         """Start the new version and leave."""
@@ -775,7 +799,7 @@ class StartupCheck:
 
     It is quiet in that nothing appears unless there is something to say: no
     window while it asks, no window if the answer is "you are up to date", and
-    no window if the server cannot be reached — a failed update check is not
+    no window if the server cannot be reached; a failed update check is not
     the user's problem and must never be the first thing they see.
 
     When there *is* an update, what happens next is what the user asked for in

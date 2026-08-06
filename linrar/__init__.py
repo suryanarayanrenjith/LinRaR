@@ -1,4 +1,4 @@
-"""LinRAR for Linux — a WinRAR-style archive manager.
+"""LinRAR for Linux: a WinRAR-style archive manager.
 
 Importing the package gives you the version and nothing else: everything
 graphical lives under :mod:`linrar.ui` and is imported only once the platform

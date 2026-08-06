@@ -6,7 +6,7 @@
 #
 # The tarball is the project as it is installed: unpack it anywhere and run
 # ./install.sh, exactly as with a clone.  What a clone does *not* have is
-# linrar/_build.py, the stamp written below — it records which commit this copy
+# linrar/_build.py, the stamp written below; it records which commit this copy
 # was cut from, and it is how an installed LinRAR can tell "the published
 # 2.1.0" from "somebody's working tree that calls itself 2.1.0".
 #
@@ -96,7 +96,7 @@ info "timestamp  ${BUILD_DATE}"
 
 if [ -n "$(git status --porcelain 2>/dev/null)" ]; then
     warn "the working tree has uncommitted changes"
-    warn "they go into the tarball, but the stamp will name ${COMMIT} — do not publish this"
+    warn "they go into the tarball, but the stamp will name ${COMMIT}; do not publish this"
 fi
 
 # ------------------------------------------------------------- 1. staging
@@ -124,7 +124,7 @@ ok "${COUNT} files"
 step "Stamping the build"
 
 cat > "${STAGING}/linrar/_build.py" <<EOF
-"""Which build this copy is — written by tools/package.sh, never committed.
+"""Which build this copy is: written by tools/package.sh, never committed.
 
 A source checkout does not have this file, and linrar/version.py treats its
 absence as the ordinary case: that is precisely how "a published release" and

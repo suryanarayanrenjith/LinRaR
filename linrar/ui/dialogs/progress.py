@@ -50,11 +50,8 @@ class ProgressDialog(QDialog):
         self.total_bytes = total_bytes
         self._start = time.monotonic()
         self._finished = False
-        self._cancelling = False
         self._started = False
         self._bytes_done = 0
-        self._files_done = 0
-        self._files_total = 0
         #: Archive being written, watched for the live compression ratio.
         self._ratio_path = ""
         #: Set when the user pressed "Background": the dialog closes but the
@@ -191,8 +188,6 @@ class ProgressDialog(QDialog):
     def _on_stats(
         self, files_done: int, files_total: int, bytes_done: int, bytes_total: int
     ) -> None:
-        self._files_done = files_done
-        self._files_total = files_total
         self._bytes_done = bytes_done
         if bytes_total:
             self.total_bytes = bytes_total
@@ -253,7 +248,6 @@ class ProgressDialog(QDialog):
         if self._finished:
             self.reject()
             return
-        self._cancelling = True
         self.cancel_button.setEnabled(False)
         self.action_label.setText("Cancelling...")
         self.task.cancel()

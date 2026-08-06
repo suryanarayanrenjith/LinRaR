@@ -4,7 +4,7 @@ An updater will make its decision from these rules, so they are pinned here:
 the ordering example out of the Semantic Versioning specification, what counts
 as an upgrade, and the two files (linrar/version.py and CHANGELOG.md) that a
 release is cut from.  Nothing in this file touches the real project's version
-or CHANGELOG — the bump is exercised against a copy in a temporary directory.
+or CHANGELOG; the bump is exercised against a copy in a temporary directory.
 """
 import json, os, re, shutil, subprocess, sys, tempfile
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -204,7 +204,7 @@ check("version.py was rewritten",
 
 changelog = open(CHANGELOG).read()
 check("the CHANGELOG gained a dated heading for it",
-      f"## {NEXT_MINOR} — 2026-01-01" in changelog, changelog[:200])
+      f"## {NEXT_MINOR} - 2026-01-01" in changelog, changelog[:200])
 check("an empty Unreleased section was opened above it",
       changelog.index("## Unreleased") < changelog.index(f"## {NEXT_MINOR}"))
 check("the notes moved under the new number, none of them lost",

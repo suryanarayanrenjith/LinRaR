@@ -4,15 +4,348 @@ All notable changes to LinRAR, newest first.
 
 ## Unreleased
 
-## 2.1.0 — 2026-08-03
+## 2.5.0 - 2026-08-06
+
+### Themes you can install, like WinRAR's
+
+- **Options > Themes... (`Ctrl+Shift+M`)** is a theme manager. It lists the two
+  built-in themes, **ten new ones that ship with LinRAR**, and anything you
+  install yourself.
+- **The preview is real.** Selecting a theme shows a working miniature of the
+  main window, toolbar, list pane, column headers, group box, buttons, progress
+  bar, status bar, wearing that theme, beside a window still wearing the old
+  one. It is not a drawing of the theme: the same style sheet that would restyle
+  the window is set on the preview subtree, so what you see is what Apply does.
+  **Apply** repaints the application and leaves the dialog open, **Cancel** puts
+  back the theme that was in force when it opened.
+- **A theme changes everything the built-ins do.** Every surface, edge,
+  gradient, selection and hover colour; the corner radii, so *Classic Silver*
+  is hard-square and *Sakura Blossom* is round; the font; and **the icon set**,
+  which is *redrawn* in the theme's colours rather than tinted, because the
+  icons are SVG built from a palette record. A theme can also replace individual
+  icons outright with SVG of its own and append style sheet rules that override
+  everything else.
+- **The ten:** *Midnight Neon*, *Nord Frost*, *Dracula Purple*, *Graphite
+  Steel* and *Crimson Noir* (dark); *Solarized Sand*, *Forest Canopy*, *Sakura
+  Blossom*, *Classic Silver*, the beige and navy of Windows 95, which is what
+  WinRAR looked like when it was new, and *Arctic Paper* (light). Five of
+  each.
+- **Installing one** is **Install theme file...**, or dropping it on the window:
+  a `.linrar-theme` file, a zip of a theme folder, or a bare `theme.json`. It
+  lands in the themes folder **Open themes folder** opens, which is the only
+  place **Remove** will ever delete from. A copy there shadows a system-wide one
+  of the same name.
+- **Nothing in a theme is executed**; it is two colour maps and some numbers.
+  A zip that holds an absolute path, a `..`, a symbolic link or an absurdly
+  large member is refused outright rather than partly unpacked, and a theme is
+  loaded back from where it landed before the install is reported as having
+  worked.
+- **A theme with mistakes in it still works.** `base` says which built-in to
+  start from and everything a manifest leaves out keeps that theme's value, so
+  a ten-line theme is a perfectly good theme and there is no way to end up with
+  black text on a black list. A bad colour, a gradient triple written as one
+  value, a radius of 99: each is skipped, named, and shown under the preview;
+  one typo costs one value rather than the theme.
+- The theme is still one setting (`view/theme`), so an administrator can name a
+  pack for every user of a machine and lock it, and every way of changing it,
+  the Themes button, the Settings combo, the manager itself, greys out
+  together. A theme the settings file names but nobody installed falls back to
+  the light theme instead of failing to start.
+- **Settings > General** lists every theme with a preview of its icons, and has
+  a **Themes...** button through to the manager. **Themes** is also available as
+  a toolbar button from Customize.
+- `themes/` is **not** in version control: it is data you install, edit and
+  delete, and nothing is shipped into it. The ten are downloaded from the site,
+  see *The theme generator now lives on the website*, below, and
+  [docs/THEMES.md](docs/THEMES.md) documents the format.
+- All ten were held to the contrast the built-in themes themselves manage,
+  capped at WCAG AA: that is how four genuinely unreadable spots were found and
+  fixed before any of them shipped, among them a progress bar whose percentage
+  vanished into the bar. The theme builder now runs the same check live.
+
+### Themes, part two: dropping one in, and being told what is wrong with it
+
+- **Drag a theme onto the Themes window to install it.** A folder or a file,
+  however many at once. The window carries a card saying so and naming the
+  folder they are kept in, because a drop target nobody knows about is not a
+  feature; dropping into that folder in a file manager works just as well.
+- **Anything in a themes folder that could be a theme is now treated as one:**
+  a folder, a folder one level deeper (which is what a zip tool leaves behind),
+  a folder holding a single JSON file of any name, a bare manifest, or a zip,
+  and a zip is read **in place**, because a file already sitting in the themes
+  folder should not have to be installed. `.linrar-theme`, `.theme`, `.zip` and
+  `.json` are all recognised.
+- **`themes/` beside the application is now the folder themes go into**, when it
+  is writable, and it is searched *last*, so a theme you dropped in beats one
+  installed for the whole machine. On a system-wide install, where that folder
+  belongs to root, it falls back to `~/.local/share/LinRAR/themes` and nothing
+  anywhere assumes which of the two it is.
+- **A theme that will not load is now listed rather than ignored.** It appears
+  under *needs fixing* with the whole diagnosis: bad JSON says which line and
+  column and names the four things that usually cause it; a folder with no
+  manifest says where to put one; a theme calling itself "dark" says to rename
+  it. **Copy report** and **Delete this file** are right there, and **Rescan**
+  picks up the fix. A theme nobody can find is the one failure that cannot be
+  debugged, so silence was the worst possible answer.
+- **Every mistake now says how to fix it.** Four fields rather than a sentence,
+  where it is, what you wrote, what belongs there, and a line of JSON to paste
+  instead, with a *did you mean* for a misspelled name (`"windo"` becomes `window`),
+  a worked `[light, mid, dark]` triple built from the colour you actually wrote,
+  and a note that colour *names* are refused because they differ between
+  systems. A radius written among the colours is told to move to `metrics`
+  rather than reported as an unknown colour.
+- **The manager is now hard to miss:** the palette button in the menu bar's
+  corner, `Ctrl+Shift+M`, a button in Settings, and **Options > Themes...**.
+- **Every icon follows the theme, not just some.** A theme picks an
+  `icon_style`: `gloss` (the built-in 3D look), `flat` (no gradients or
+  shadows at all, with a hard outline), `neon` (lit from inside) or `soft`, and
+  it applies to **all thirty-nine** glyphs at once, because a flat folder next
+  to a glossy 3D wrench reads as a bug rather than as a theme. Each of the ten
+  themes also carries real SVG artwork of its own for the fourteen glyphs you
+  look at most, drawn from one geometry description and four style renderers.
+- **Fixed: the file-type icons never really changed with the theme.** Their
+  coloured bands came from a fixed table of brand colours, so however far a
+  theme moved, the file list stayed in the built-in blues and greens. They are
+  now mixed out of the theme's own palette, with the shades pushed apart so
+  fifteen kinds of file are still told apart by six inks.
+- The two built-in themes are untouched by all of this, and `assets/linrar.svg`
+  was re-exported from the icon set so the shipped application icon still
+  matches it exactly.
+
+### One button for how LinRAR looks
+
+- **The light/dark switch is gone, and so is the Theme submenu.** There were
+  three ways to change one setting and two of them only ever offered two of the
+  twelve themes. What is left is a single **Themes** button, in the menu bar's
+  corner where the switch used to be, plus **Options > Themes...** and
+  `Ctrl+Shift+M`, which are the same command. It opens the manager, where every
+  theme is listed and each one is previewed before it is applied.
+  `Ctrl+Shift+T` no longer does anything.
+- **Not on the toolbar either**, as it ships: the corner button is already
+  there, and a second button for the same command beside *Dependencies* was one
+  too many. Customize can still put it on the toolbar for anybody who wants it.
+- The button's tooltip names the theme in use, so the thing the switch used to
+  tell you at a glance is still there to read.
+- Light and Dark are of course still themes; they are the first two rows of the
+  manager, as they always were.
+
+### themes/ belongs to you
+
+- **Nothing is shipped into `themes/` any more, not even a README.** It is the
+  folder you drop themes into, and a file of documentation sitting among them was
+  never anybody's idea of tidy. The format is documented in
+  **[docs/THEMES.md](docs/THEMES.md)** instead, and `.gitignore` excludes the
+  folder and everything in it explicitly.
+- The ten themes are **downloaded from the site** rather than written into it.
+
+### The theme generator now lives on the website
+
+- **`tools/make_themes.py` is gone.** The whole of it, the colour maths, the
+  eighty-two-colour derivation, the four-style icon renderer, the ten theme specs
+  and the manifest writer, is now `linrar-ui/src/theme-engine/`, in TypeScript,
+  and it runs in the browser.
+- **The port is exact.** Every field of all ten themes, their icon palettes and
+  all their generated artwork was compared against the Python output before the
+  script was deleted, and the only differences were rounding: `Math.round` rounds
+  a half up, Python's `round()` rounds half to even. The TypeScript now does the
+  same, so a theme built in the browser is the same file the command line would
+  have produced.
+- **New `/create` route: a theme builder.** Thirteen colours in, a whole theme
+  out. Pick the surfaces, the accents and the icon inks; choose light or dark, one
+  of four icon styles and three corner radii; watch a miniature of the window
+  repaint as you go, and download the `.linrar-theme` when it looks right. Any of
+  the twelve existing themes can be loaded as a starting point.
+- **It checks legibility while you choose.** The same seventeen colour pairs the
+  application's test suite used to hold the shipped themes to are checked live, so
+  a progress bar whose percentage vanishes into it is caught before anybody
+  downloads the theme rather than after.
+- The download is a single JSON file named `.linrar-theme`, with the icon artwork
+  inside it under `icon_svg`; LinRAR reads that as a theme directly, so there is
+  no archive to build in the browser and nothing to unpack at the other end.
+- Nothing on the site is pre-generated any more: `src/themes.generated.ts` and the
+  ten packed downloads are gone, and the gallery, the previews, the downloads and
+  the builder all call one `build()`. A theme cannot be shown in colours its file
+  does not have. `install.sh` no longer generates anything into `themes/` either;
+  that folder starts empty, and themes come from the site.
+- **What was lost, stated plainly:** the test-suite gate that held every shipped
+  theme to the contrast the built-ins manage. There is nothing shipped to hold any
+  more, so `tests/test_themes.py` now checks the loader against themes it writes
+  itself, and the legibility job moved to the builder.
+
+### linrar-ui: a themes page, and a shorter front page
+
+- **New `/themes` route** listing all ten themes with a working miniature of the
+  window in each one: painted from the theme's real palette and radii, with the
+  real icons the application's own engine drew for it. Filter by light or dark,
+  and download any of them as a `.linrar-theme` file.
+- Everything on that page comes from one call: the same `build()` that produces
+  the download produces the preview, so a preview cannot advertise colours the
+  file does not have.
+- **The landing page went from twelve sections to six**; what it is, what it
+  does, what it opens, themes, how to get it, get it. The problem statement, the
+  dependency table, the file-manager list, the terminal reference, the distro
+  grid, the tech-stack strip and the FAQ were all true and all documentation,
+  which is what the README and `docs/` are for.
+- Routing is about ninety lines rather than a dependency: two routes, real
+  anchors that stay middle-clickable, and a `vercel.json` rewrite so `/themes`
+  survives a hard refresh.
+- **The window in the hero is painted from real theme data.** It used to carry
+  two hand-sampled colour blocks and a sun/moon switch: a control the
+  application no longer has. The palette now arrives from
+  `themes.generated.ts`, including the two built-ins, so the mock cannot show a
+  shade LinRAR has stopped using; and the button in its menu bar is the palette,
+  which steps the window through five of the real themes. What the mock still
+  draws in the site's own line-art is the *icons*: thirty-nine real SVGs twelve
+  times over is most of a megabyte for one hero image, and the /themes page is
+  where the genuine icons are.
+
+### The site, tidied
+
+- **One Themes button in the app means one in its picture too:** the window in the
+  hero no longer has a light/dark switch. The palette in its menu bar steps
+  through five real themes instead, and its chrome is painted from real theme
+  data.
+- The two sub-pages shared a masthead written twice; it is one set of global
+  classes now, so they cannot drift apart. Route changes fade rather than snap,
+  links to another *page* are pills where links to a *section* are underlines, and
+  the scrollbar belongs to the page rather than to the browser.
+
+### Every screenshot is taken by a script
+
+- `tools/screenshots.py` drives the real application offscreen against a demo
+  folder it creates and deletes, and writes all twelve images in `docs/images`.
+  No mock-ups, no editing afterwards, and no way for a screenshot to show a
+  window LinRAR does not build. `docs/DEVELOPMENT.md` says to run it after
+  changing the chrome, the toolbar or a dialog.
+- **Every screenshot has been retaken** for the new chrome, and the old ones are
+  gone. Two are new: the Themes window previewing a theme, and a theme that
+  will not load showing what to fix.
+- It shoots with the folder tree switched off, and that is deliberate: the tree
+  is real, it lists the siblings of every ancestor, and no amount of framing
+  stopped it filling with whatever else was on the machine that took the
+  picture. A committed image is not the place for somebody's other project
+  names.
+
+### Passwords stay out of the process table
+
+- **An archive password is no longer visible to other accounts.** Creating an
+  encrypted ZIP ran `zip -P <your password>`, and creating an encrypted 7z ran
+  `7z -p<your password>`. On a stock Linux any other account on the machine can
+  read `/proc/<pid>/cmdline`, so for as long as the command ran the password
+  was there for the taking. Both tools will instead *ask* for it if they have a
+  terminal, so LinRAR now gives the child one of its own and types the answer.
+- **An archive that came out unencrypted is destroyed rather than handed back.**
+  Driving a tool through a prompt is only worth doing if the result is checked,
+  so a newly encrypted archive is read back and every file in it has to really
+  be encrypted. One that is not is deleted, and the message says to use RAR.
+- Reading an existing encrypted 7z archive still passes the password in the
+  command line, because 7-Zip offers no other way in: a bare `-p` means "ask
+  me" to `7z a` and "the empty password" to `7z x`, with no prompt at all. RAR
+  takes its password on standard input for every command, which is why the
+  format selector recommends it.
+- **`~/.config/LinRAR/linrar.conf` is now created 0600, in a 0700 folder.** It
+  records the folders you have been in, the archives you opened, and, on a
+  machine with no keyring, your saved archive passwords. Qt wrote it with the
+  process umask, which on most distributions left it readable by everyone.
+
+### Archives from strangers are treated as such
+
+- **A symbolic link that points out of the extraction folder is refused.** A
+  ZIP could carry a link to `/etc` or to `../..`; it was recreated as-is, which
+  left a trap in a folder you might pass on, and could route a later member's
+  contents through it. `unrar` has always refused these and now so does LinRAR.
+- **An archive claiming millions of files is turned away with a sentence**
+  rather than filling memory while the window is still opening.
+- **A member whose name begins with a dash can no longer become a rar switch.**
+  `rar` has no `--` to end its options, and renaming inside an archive is the
+  one command that passes member names on the command line.
+- **The updater will not be walked down to plain HTTP.** It refused an
+  `http://` address in the manifest, but followed a redirect to one without a
+  word. Downloads are also capped, the download name has to be a plain file
+  name, and the checksum has to be hexadecimal.
+- **Release notes are no longer trusted with a link.** They arrive over the
+  network and were rendered with every link armed; only `http` and `https` are
+  followed now, and the release URL is escaped before it goes into the pane.
+- An `install.sh` that produced no output during an update could be waited on
+  for ever. The timeout is now enforced whether or not the script says anything.
+
+### Faster
+
+- **Starting up no longer repaints the whole theme.** Every one of the
+  thirty-eight small glyphs Qt needs (arrows, check boxes, radios, tree
+  twisties) was redrawn and rewritten to disk on every launch, on every theme
+  change, and once per step through the Theme Manager's list. They are painted
+  once per theme and kept.
+- **The toolbar no longer runs every archive tool to draw itself.** Deciding
+  whether to put a warning on the Dependencies button ran `rar`, `unrar`, `7z`
+  and the rest to ask their versions, up to eighteen process launches, every
+  time the toolbar was rebuilt. It now only looks for them.
+- **A folder of ten thousand files scrolls without re-deciding what everything
+  is.** A row's type and icon were worked out afresh every time Qt painted it,
+  and again for every comparison when sorting by Type.
+- Opening an archive asked the keyring for every saved password, once per
+  saved password, whether or not the archive was even encrypted.
+- Selecting files, expanding a folder selection, identifying a file's format,
+  and finding where a member was unpacked to were all doing work proportional
+  to the square of what they were given. They are all one pass now.
+
+### Fixed
+
+- **Forward, then Back, out of an archive landed in the folder it lives in
+  rather than back inside it.** Back and Forward were written separately and
+  only one of them knew an entry could be an archive; they are one method now.
+- A ZIP archive created or edited by LinRAR came out mode 0600, private to
+  whoever made it, because it was built through a temporary file. It now gets
+  the mode an ordinary file would, or the one the archive it replaced had.
+- The glyph cache fell back to a fixed name under `/tmp` when no cache
+  directory was available, which anybody on the machine could create first.
+
+### Code nothing was running
+
+Everything below was found by cross-referencing every definition in the package
+against every mention of it in the package, the tests, the tools, the installer
+and the documentation, then reading each hit in place.
+
+- **Gone: nine functions and methods nothing called.** `ArchiveBackend.build_tree`
+  (44 lines, and it had dead code of its own inside it), `Profile.to_options`
+  and the `_update_from_value` helper only it used, `Settings.reload_system`,
+  `PasswordStore.recheck`, `platform.describe_machine`, `themes.ids`,
+  `search.relative_display`, and `main_window._find_under`, which this release
+  had already replaced with the index beside it.
+- **Gone: seven names nothing read.** The `METHOD_BY_KEY` lookup table, the
+  `POLICY_KEYS` tuple, the `_ACTIONS` copy of the command line table (whose own
+  comment admitted it was vestigial), the `ensure_user_dir` and `APP_VERSION`
+  aliases, and the `contextRequested` signal that was never emitted or
+  connected.
+- **Gone: six attributes written and never looked at**, in the convert,
+  problem, progress and update windows. The progress window was keeping three
+  counters up to date that nothing displayed.
+- **Gone: `Ink.gloss`.** A colour every theme could set and nothing ever painted
+  with. A theme that sets it now gets told it does nothing, instead of silence.
+- **Gone: the `compression/profile` setting.** Profiles have lived under
+  `profiles/list` for some time; this was left behind. It is retired through
+  the same migration that retired the others, so it is cleared out of existing
+  configuration files rather than sitting in them for ever.
+- **`ArchiveFormat.read_only` is now used** instead of the hand-written list of
+  the four writable formats that had been copied into the main window. Which
+  formats can be written is one question with one answer.
+
+### Writing
+
+- Every em dash in the source, the documentation and the changelog has been
+  replaced with ordinary punctuation, along with the curly quotes, ellipsis
+  characters, arrows and bullet glyphs that had crept in. The text says the
+  same things; it just says them in ASCII.
+
+## 2.1.0 - 2026-08-03
 
 ### Find reads the files, not just their names
 
 - **The "Text to find" box does something.** It has been on the Find dialog
   all along, and nothing ever read it: the window filtered on the *name* mask
   and the text was thrown away, so typing a word and pressing Find quietly did
-  nothing. Find now reads the matching files — through the current folder and
-  everything under it, or through the open archive — and lists every line that
+  nothing. Find now reads the matching files, through the current folder and
+  everything under it, or through the open archive, and lists every line that
   contains the text, grouped by file, with the line numbers. **Go to file**
   takes the window to whichever one you pick.
 - A name mask on its own still filters the list in place, as it did; the
@@ -29,8 +362,8 @@ All notable changes to LinRAR, newest first.
 
 ### Checksums
 
-- **Tools → Calculate checksums (Ctrl+K)** works out CRC32, MD5, SHA-1,
-  SHA-256 and SHA-512 for the selected files — on disk or inside an archive —
+- **Tools > Calculate checksums (Ctrl+K)** works out CRC32, MD5, SHA-1,
+  SHA-256 and SHA-512 for the selected files, on disk or inside an archive,
   in a single pass over the bytes, so asking for five costs no more reading
   than asking for one.
 - Paste a published checksum (or a whole `sha256sum` line) into the box at the
@@ -41,7 +374,7 @@ All notable changes to LinRAR, newest first.
 ### A keyring that is not there no longer swallows passwords
 
 - **Fixed: every password saved could vanish silently.** `secret-tool` being
-  installed does not mean anything is listening — a headless server, a minimal
+  installed does not mean anything is listening: a headless server, a minimal
   desktop, a container and a CI runner all routinely have the command and no
   service behind it. It then fails with *"Could not connect"* on stderr while
   still exiting 1, which is also the perfectly ordinary "nothing stored yet".
@@ -61,20 +394,20 @@ All notable changes to LinRAR, newest first.
   check before the hang names itself. This is how the above was found: on
   GitHub's runner the missing keyring left LinRAR with no saved password, the
   archive raised a *modal* prompt, and offscreen it waited for an answer that
-  could never come — the job simply stopped after `test_navigation.py` with
+  could never come: the job simply stopped after `test_navigation.py` with
   nothing to say. GUI tests now count password prompts instead of showing
   them, so "LinRAR had to ask" is a failed check with a name.
 - **A test file that runs no checks is reported as skipped, not as a pass.**
-  One that steps aside — no AppImage runtime to build with, say — looked
+  One that steps aside, no AppImage runtime to build with, say, looked
   exactly like one that verified everything, which is how a file quietly stops
   testing anything without anybody noticing. The reason it gave is shown.
 
 ### Saved passwords are finally used
 
-- **Fixed: *Tools → Organize passwords* stored passwords nobody ever read.**
+- **Fixed: *Tools > Organize passwords* stored passwords nobody ever read.**
   An archive a saved password would have opened still stopped and asked for
   one. Saved passwords whose mask fits the archive are now tried first, in
-  order — a specific mask before a catch-all — and only when they are
+  order, a specific mask before a catch-all, and only when they are
   exhausted is the question asked. The status bar says when one was used.
 - The password prompt has a **Remember this password** box, so saving one no
   longer means a separate trip to a management dialog.
@@ -96,26 +429,26 @@ All notable changes to LinRAR, newest first.
 - **Column widths survive a restart.** The saved header state was restored and
   then immediately overwritten by the factory widths, because the first
   listing is built after the state is read.
-- **"Reset the interface" now resets the columns too** — widths, order and
+- **"Reset the interface" now resets the columns too**: widths, order and
   sort indicator. `QHeaderView.reset()` is the model-reset slot and does
   nothing to section sizes.
 - **7-Zip archives no longer lose files when "Store full folder structure" is
   off.** 7z has no exclude-paths switch and was handed bare base names, so it
   could not find anything in a subfolder, said so as a *warning*, exited 1 and
   produced an archive quietly missing them. The files are now laid out flat in
-  a scratch folder — hard-linked, so it costs nothing — and archived from
+  a scratch folder, hard-linked, so it costs nothing, and archived from
   there, using only `7z a`, the one command every build agrees about. (Doing
   it by renaming the members afterwards with `7z rn` worked on p7zip 16.02 and
   died with exit 255 on the 7-Zip release newer distributions ship.) A base
   name already taken keeps its folder rather than overwriting the other file.
 - **7-Zip write commands no longer pass a bare `-p`.** What it means is not
-  settled between builds — p7zip reads it as an empty password, newer 7-Zip
-  as "ask me" — and a command that decides to ask, with nothing on stdin,
+  settled between builds, p7zip reads it as an empty password, newer 7-Zip
+  as "ask me", and a command that decides to ask, with nothing on stdin,
   dies rather than doing the work. Same rule the rar backend already follows.
 - **A file 7-Zip could not read is reported.** Its scan warnings sit behind an
   exit status that archive creation has to allow, so the words are now read as
   well as the status.
-- **ZIP archives the built-in reader will not touch are handed to 7-Zip** — a
+- **ZIP archives the built-in reader will not touch are handed to 7-Zip**: a
   spanned archive, one behind a self-extracting stub, one with a damaged
   central directory. When neither can open it, the message says so in ZIP
   terms rather than passing through `exit code 2`.
@@ -134,15 +467,15 @@ All notable changes to LinRAR, newest first.
 - An operation that outlives its progress window is now adopted and reported
   when it really finishes, instead of being announced as a success while it
   is still running.
-- Toggling hidden files no longer re-reads the open archive — and no longer
-  asks for its password again — for a setting that cannot change what is
+- Toggling hidden files no longer re-reads the open archive, and no longer
+  asks for its password again, for a setting that cannot change what is
   shown.
 - The Customize picker knows about every toolbar button; Back, Forward,
   Update and Theme were offered without their icons.
 
 ### Small additions
 
-- **File → Open recent** keeps the archives you opened lately, kept apart from
+- **File > Open recent** keeps the archives you opened lately, kept apart from
   the address bar's folder history.
 - The status bar shows **free space** on the filesystem the current folder
   lives on, with the total and the percentage used in its tooltip.
@@ -152,8 +485,8 @@ All notable changes to LinRAR, newest first.
 - **Extracting no longer opens the archive in the background.** Unpacking from
   the file list, the right-click menu or the command line used to step the
   browser into the archive first, leaving the user somewhere they had not
-  asked to be. The window now stays exactly where it is — same folder, same
-  title, same Back history — and the listing refreshes when the files arrive.
+  asked to be. The window now stays exactly where it is, same folder, same
+  title, same Back history, and the listing refreshes when the files arrive.
   Testing an archive from outside behaves the same way.
 - Extracting several selected archives runs them one after another and reports
   how many succeeded, instead of leaving the browser inside the last one.
@@ -164,7 +497,7 @@ All notable changes to LinRAR, newest first.
   weighted by **bytes**, as WinRAR's is: thirty small files followed by one
   large one no longer reads as "almost finished" after the small ones. It was
   previously derived from the file count, and fell back to *copying the
-  per-file percentage outright* whenever the count was unknown — which is why
+  per-file percentage outright* whenever the count was unknown, which is why
   both bars moved in lock step.
 - **More detail, WinRAR's set:** elapsed time, time left, bytes processed of
   the total, the file count (`14 of 38`), current speed, and the live
@@ -185,16 +518,16 @@ All notable changes to LinRAR, newest first.
 ### Self-extracting archives, in one step
 
 - **The Add dialog makes AppImages.** *Create SFX archive* now has the kind
-  beside it: **AppImage** or **RAR .sfx stub**, with an **Options…** button
+  beside it: **AppImage** or **RAR .sfx stub**, with an **Options...** button
   for the full SFX module. One press of OK compresses *and* wraps, leaving no
   intermediate `.rar` behind. Previously an AppImage could only be reached by
   creating a `.rar`, opening it, and finding a separate command.
 - **One SFX command instead of two.** *Convert to AppImage (SFX)* and *Convert
-  to RAR .sfx stub* are now a single **Commands → Convert archive to SFX**
+  to RAR .sfx stub* are now a single **Commands > Convert archive to SFX**
   (`Alt+S`); the dialog asks which of the two you want and explains the
   difference. The stub's pages are simply put away, since it takes no options.
 - The archive name follows the choice (`.AppImage` / `.sfx` / `.rar`), volume
-  splitting greys out while an AppImage is selected — it is one file — and the
+  splitting greys out while an AppImage is selected, it is one file, and the
   choice is remembered and saved into compression profiles.
 
 ### The interface, tidied
@@ -206,8 +539,8 @@ All notable changes to LinRAR, newest first.
   archive to SFX** sit directly in Commands where WinRAR puts them, with the
   two volume commands under a **Volumes** submenu.
 - Removed a dead *Convert archive* action that only forwarded to *Convert
-  archives…*.
-- **Help → About** now links to the website and the source repository, next to
+  archives...*.
+- **Help > About** now links to the website and the source repository, next to
   the author's page.
 
 ### Opening files: it now explains itself
@@ -219,13 +552,13 @@ All notable changes to LinRAR, newest first.
   which tool would open it and whether that tool is installed. The result is a
   headline, an explanation, a table of findings, concrete suggestions, and a
   block of technical detail with the hex dump, the exit code and the tool's own
-  words — which **Copy report** puts on the clipboard for a bug report.
-- **The fix is a button.** *Install tools…* when a tool is missing, *Open
+  words, which **Copy report** puts on the clipboard for a bug report.
+- **The fix is a button.** *Install tools...* when a tool is missing, *Open
   volume 1* for a part of a split archive, *View in LinRAR*, *Open with another
-  application*, *Repair…*, or the nearest folder that still exists.
+  application*, *Repair...*, or the nearest folder that still exists.
 - **Fixed: a file that is not an archive opened an empty window.** `unrar lt`
-  answers "…is not RAR archive" and still exits 0, and `x`/`t` exit 1, all of
-  which counted as success — so a text file named `.rar` "opened" and showed
+  answers "...is not RAR archive" and still exits 0, and `x`/`t` exit 1, all of
+  which counted as success, so a text file named `.rar` "opened" and showed
   nothing, and extracting it silently produced no files. All three now read the
   answer rather than the exit status.
 - **Contents beat names.** A `.rar` that is really an HTML error page is
@@ -243,7 +576,7 @@ All notable changes to LinRAR, newest first.
 
 ### Browsing
 
-- **Back and Forward**, `Alt+←` / `Alt+→`, over folders and archives alike,
+- **Back and Forward**, `Alt+Left` / `Alt+Right`, over folders and archives alike,
   with tooltips naming where they lead and available as toolbar buttons.
 - **The cursor follows the eye.** Stepping out of a folder leaves it selected
   in its parent; returning to a folder restores the row that was current there.
@@ -271,7 +604,7 @@ All notable changes to LinRAR, newest first.
   without opening a window, exiting 0 only for a file LinRAR can really open.
 - **The line is parsed rather than sniffed.** Unknown options are refused with
   a suggestion of the one you meant, two actions at once are refused, an action
-  with nothing to act on fails before a window opens — all with status **2** —
+  with nothing to act on fails before a window opens, all with status **2**,
   and `--` ends the options. Files that do not exist are named on stderr
   instead of being silently dropped.
 
@@ -282,14 +615,14 @@ All notable changes to LinRAR, newest first.
   read before the user's own file, so a machine can be set up once for
   everybody. Each layer overrides the one before; the user still has the last
   word unless the administrator says otherwise.
-- **Locking.** A `[policy]` section names keys the user may not change —
+- **Locking.** A `[policy]` section names keys the user may not change:
   `locked=view/theme, paths/*`, with shell wildcards, or `lock_all=true` for
   every key the file sets. A locked setting keeps the administrator's value,
   ignores anything already in the user's file, and is never written back to it.
 - **The interface says so.** Every menu entry, checkbox, combo and path box
   bound to a locked key is greyed out with a tooltip naming the file that
   decided it; the Settings and Customize dialogs carry a banner counting them;
-  **Settings → Tools and system** lists the system files in force and how many
+  **Settings > Tools and system** lists the system files in force and how many
   settings each contributes. Nothing is clickable that would not be saved.
 - **`linrar --config-info`** prints the files in play, the locked keys, and
   every effective value with the layer it came from.
@@ -304,8 +637,8 @@ All notable changes to LinRAR, newest first.
 ### Linux only, and it says so
 
 - The application, `install.sh`, `uninstall.sh` and `run.sh` all check the
-  platform first and stop with an explanation — and a suggestion of what to use
-  instead — on anything but Linux. The check in `linrar/__main__.py` runs
+  platform first and stop with an explanation, and a suggestion of what to use
+  instead, on anything but Linux. The check in `linrar/__main__.py` runs
   *before* PyQt6 is imported, so the message arrives even where Qt will not
   load. `LINRAR_ALLOW_ANY_OS=1` overrides it, loudly, for porting work.
 
@@ -327,13 +660,13 @@ All notable changes to LinRAR, newest first.
 ### An icon for every kind of file
 
 - **The file list draws what a file is**, instead of giving everything that is
-  not an archive the same blank page. Fifteen new icons — Word, Excel,
+  not an archive the same blank page. Fifteen new icons: Word, Excel,
   PowerPoint, PDF, OpenDocument and EPUB, images, audio, video, source code,
-  fonts, programs, databases, disc images and keys — drawn in the same style as
+  fonts, programs, databases, disc images and keys: drawn in the same style as
   the rest of the set, as a sheet with a coloured band across its foot, because
   at sixteen pixels the colour is what the eye reads.
-- **Every file is identified now.** A file with no extension at all — a
-  compiled program, a `README` with no suffix — used to read as "File"; its
+- **Every file is identified now.** A file with no extension at all, a
+  compiled program, a `README` with no suffix, used to read as "File"; its
   first bytes are read instead, so it reports what it actually is. Only files
   with nothing in the name to go on are read, the answer is remembered until
   the file changes, and a member of an archive is never read at all.
@@ -347,18 +680,18 @@ All notable changes to LinRAR, newest first.
   with a choice of format at the top and every page below it greyed out if you
   picked the other one. The format is gone from it: all six pages describe an
   AppImage, so that is what the window is now called and all it asks about.
-- *Commands → Convert archive to SFX* asks which kind first, in a small window
-  that explains the difference — and the `.sfx` stub, which takes no options at
+- *Commands > Convert archive to SFX* asks which kind first, in a small window
+  that explains the difference, and the `.sfx` stub, which takes no options at
   all, goes straight to the converter instead of through a window with nothing
   to fill in.
 - On the Add dialog the kind is already a box beside the button, so pressing
-  **Options…** goes straight to the AppImage settings.
+  **Options...** goes straight to the AppImage settings.
 
 ### Files it does not archive, handled properly
 
 - **The viewer shows the file, not its bytes.** It was answering anything it
   did not recognise with a hex dump; it now asks what the file is and shows
-  the most useful thing it can — text in whatever encoding it turns out to be,
+  the most useful thing it can; text in whatever encoding it turns out to be,
   images as images, and **Word, PowerPoint, Excel, OpenDocument and EPUB as
   their text**, lifted out of the XML inside them with nothing but the standard
   library. **View as hex** is still one click away, because sometimes the hex
@@ -375,7 +708,7 @@ All notable changes to LinRAR, newest first.
 - **LinRAR no longer takes over what is not its.** Installing it made it the
   default application for everything in its MIME list; that list now has two
   halves. It claims archive formats, and it merely *offers* itself for `.jar`,
-  `.apk`, `.deb`, `.rpm`, `.epub` and the office formats — all of which it can
+  `.apk`, `.deb`, `.rpm`, `.epub` and the office formats; all of which it can
   open, none of which it should own.
 - **The Type column knows several hundred file types** instead of sixty, and
   reads them from the same table the viewer does, so the two can never
@@ -390,10 +723,10 @@ All notable changes to LinRAR, newest first.
   backup the way Thunar's already was. With Dolphin, Konqueror, Nemo,
   Nautilus, Caja and Thunar that is ten.
 - The menus offer **Test archive** as well, and their file-type lists went from
-  ten extensions to over fifty — written once now, and reshaped for whichever
+  ten extensions to over fifty: written once now, and reshaped for whichever
   punctuation each file manager wants.
 - **146 distributions** are recognised, up from about forty, across **18
-  package managers** — ALT Linux's apt-rpm, Mageia's urpmi, GNU Guix, OpenWrt's
+  package managers**: ALT Linux's apt-rpm, Mageia's urpmi, GNU Guix, OpenWrt's
   opkg, CRUX, NuTyX, SliTaz, Slackware and Clear Linux join the existing
   twelve, with package names for each.
 - **Architecture is no longer assumed.** LinRAR runs wherever Python and Qt do;
@@ -414,22 +747,22 @@ All notable changes to LinRAR, newest first.
   the module, so it answers for the copy on disk however often it has been
   replaced.
 - **The About box, Settings and the update window say both** while a restart is
-  pending — *"2.0.0 — 2.1.0 is installed, restart to use it"* — rather than
+  pending; *"2.0.0; 2.1.0 is installed, restart to use it"*, rather than
   going on showing the old number as though the update had not worked.
 - **Fixed: checking again after installing offered the same release twice.**
   The check compared the server's version against the one still in memory, so
   a user who updated without restarting was told the update they had just
   applied was available. It compares against what is installed now, and the
   start-up check does not run at all while a restart is pending.
-- The backup folder is named after the version being replaced — the one on
-  disk — so a second update in the same session no longer names it after a
+- The backup folder is named after the version being replaced, the one on
+  disk, so a second update in the same session no longer names it after a
   version that was overwritten an hour ago.
 
 ### Updating replaces a version rather than piling one on top of another
 
 - **Every release carries a list of its own files**, written into it when it is
   built. An update reads the installed copy's list, so it knows precisely what
-  the version it is replacing put on disk — and can delete exactly that.
+  the version it is replacing put on disk, and can delete exactly that.
 - **A file the new release no longer ships is deleted.** Previously the update
   copied the new version over the old one, so a module that had been removed
   upstream lived on for ever in every install that had ever been updated.
@@ -454,9 +787,9 @@ All notable changes to LinRAR, newest first.
 
 ### LinRAR updates itself
 
-- **Help → Check for updates.** LinRAR reads the manifest its own release
+- **Help > Check for updates.** LinRAR reads the manifest its own release
   pipeline publishes, tells you what is available and what changed in it, and
-  installs it if you say so — the tarball, the launcher, the desktop entry and
+  installs it if you say so: the tarball, the launcher, the desktop entry and
   the icons, in one press.
 - **It shows its working.** Seven stages, listed before the first one starts
   and ticked off as they pass; a download with a byte count, a live speed and a
@@ -464,24 +797,24 @@ All notable changes to LinRAR, newest first.
   details pane holding every line the updater logged, with **Copy log** for
   putting it in a bug report.
 - **Nothing that arrives over the network is trusted.** The download must be
-  the size the release declared and must hash to the SHA-256 it published —
+  the size the release declared and must hash to the SHA-256 it published:
   verified by re-reading the file from disk rather than by trusting the bytes
   that streamed past. The archive may hold only ordinary files under its own
   folder: anything with `..` in it, an absolute path or a symlink is refused
   outright rather than sanitised.
 - **A failed update leaves the version that was working.** The current install
-  is copied aside before anything is replaced, and every failure — a bad
-  download, a refused installer, a cancel — puts it back. The last step starts
+  is copied aside before anything is replaced, and every failure, a bad
+  download, a refused installer, a cancel, puts it back. The last step starts
   the newly installed copy in a fresh process and asks its version; a wrong
   answer is rolled back too, even though every individual step succeeded.
-- **Automatic updates, off until asked for** (*Settings → General → Updates*):
+- **Automatic updates, off until asked for** (*Settings > General > Updates*):
   check at start-up, install without asking, and include pre-releases. A
   start-up check reaches the network at most once an hour however often LinRAR
   is opened, says nothing when there is nothing to say, and never turns a
   failed check into something the user has to dismiss. **Skip this version**
   puts one release aside without switching anything off.
-- **It refuses what is not its to replace** — a git checkout, a folder it
-  cannot write to, a system-wide install with no administrator rights — and
+- **It refuses what is not its to replace**, a git checkout, a folder it
+  cannot write to, a system-wide install with no administrator rights, and
   says which, with the command to run instead. An administrator can lock the
   `update/` settings to decide it for a whole machine.
 
@@ -499,7 +832,7 @@ All notable changes to LinRAR, newest first.
   that a version it cannot parse is never an upgrade.
 - **A published release knows it is one.** Release artifacts carry a build
   stamp naming the commit they were cut from, so `version.channel()` tells a
-  downloaded 2.1.0 from a working tree that calls itself 2.1.0 — and an updater
+  downloaded 2.1.0 from a working tree that calls itself 2.1.0, and an updater
   can leave the second one alone. `install.sh` records it in the receipt too.
 - **Every release publishes a description of itself.** `latest.json`, at a
   permanent address, giving the version, what changed, what it needs to run,
@@ -515,7 +848,7 @@ All notable changes to LinRAR, newest first.
   tells `.github/workflows/release.yml` to publish it. A push that does not
   change the version is never mistaken for a release.
 - Nothing is published that has not passed the whole suite first, and the tag
-  is created by the same call that creates the release — so a run that fails
+  is created by the same call that creates the release, so a run that fails
   half way leaves no half-release behind, and can simply be run again.
 - `tools/package.sh` builds the tarball reproducibly (same commit in,
   byte-identical tarball out), from tracked files only, and then **unpacks what
@@ -541,7 +874,7 @@ manager, a one-command installer, and a light and dark theme of its own.
 
 - **Light and dark themes**, drawn by LinRAR rather than inherited from the
   desktop, with a matching build of the icon set for each. Switch from
-  **Options → Theme**, the corner of the menu bar, or `Ctrl+Shift+T`.
+  **Options > Theme**, the corner of the menu bar, or `Ctrl+Shift+T`.
 - **Customize** (`Ctrl+U`): choose and reorder the toolbar buttons from a
   catalogue of 34 commands, set icon size and caption style; five file-list
   views (Details, List, Small icons, Large icons, Tiles) with row height, row
@@ -586,17 +919,17 @@ manager, a one-command installer, and a light and dark theme of its own.
 - Combo boxes, spin boxes and scrollbars lost their arrows once the chrome was
   styled: Qt stops drawing a sub-control's own glyph as soon as it is styled.
 - Settings stored under a group named `general` were silently discarded on the
-  next launch — Qt writes `[%General]` and reads it back as `General/…`.
+  next launch; Qt writes `[%General]` and reads it back as `General/<key>`.
 - A launcher that renamed `argv[0]` broke the virtual environment: CPython
   resolves its prefix from `argv[0]`, so it fell back to the system Python and
   lost PyQt6.
-- `rar a -p-` does not mean "no password" — it encrypts with the literal
+- `rar a -p-` does not mean "no password": it encrypts with the literal
   password `-`. Read commands get `-p-`; write commands get no `-p` at all.
 - The Dependencies manager located tools with `PATH` alone while the rest of
   the app searched further, so a `rar` in `/opt/rar` or a Nix profile was
   reported "Missing" while LinRAR was quite happily running it.
 - unrar 7 prints an `Archive comment:` heading above the comment where unrar 6
   printed it bare, so on newer distributions every archive comment gained that
-  line — and gained another one each time it was edited. The heading is now
+  line, and gained another one each time it was edited. The heading is now
   stripped, and the listing parsers are covered by tests that feed them both
   versions' output, so a tool upgrade cannot silently change what LinRAR reads.

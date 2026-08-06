@@ -232,14 +232,6 @@ def architecture(name: str = "") -> Architecture:
                         False, False, bits)
 
 
-def describe_machine() -> str:
-    """One line naming the architecture, for reports and ``--config-info``."""
-    arch = architecture()
-    if arch.known:
-        return f"{arch.label} ({arch.machine})"
-    return f"{arch.machine or 'unknown machine'} (not one LinRAR has a note about)"
-
-
 def ensure_supported(stream: TextIO | None = None) -> None:
     """Refuse to go any further unless this is Linux.
 

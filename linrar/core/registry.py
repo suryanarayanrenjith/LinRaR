@@ -116,47 +116,62 @@ def detect_format_source(path: str) -> tuple[ArchiveFormat, str]:
 
 
 def _detect(path: str) -> tuple[ArchiveFormat, str]:
+    """Identify *path*, opening it once whatever the answer turns out to be.
+
+    The file list asks about every row that might be an archive and the
+    browser asks again when one is opened, so the number of times the file is
+    opened is worth counting.  The ISO probe and the self-extracting scan both
+    used to reopen it from the beginning; both now read through the handle
+    that is already there.
+    """
     ext = os.path.splitext(path.lower())[1]
     try:
-        with open(path, "rb") as handle:
-            head = handle.read(65536)
+        handle = open(path, "rb")
     except OSError:
         return _format_from_extension(path), "name"
 
-    if not head:
-        return ArchiveFormat.UNKNOWN, ""
-
-    for magic, fmt in _MAGIC:
-        if head.startswith(magic):
-            return fmt, "content"
-
-    for magic, fmt, extensions in _AMBIGUOUS_MAGIC:
-        if head.startswith(magic) and ext in extensions:
-            return fmt, "content"
-
-    # POSIX tar keeps its magic at offset 257.
-    if len(head) > 262 and head[257:262] in (b"ustar",):
-        return ArchiveFormat.TAR, "content"
-
-    # LZH/LHA writes "-lh0-" .. "-lh7-" at offset 2.
-    if len(head) > 7 and head[2:4] == b"-l" and head[6:7] == b"-":
-        return ArchiveFormat.LZH, "content"
-
-    # ISO 9660 stores "CD001" in the primary volume descriptor.
     try:
-        with open(path, "rb") as handle:
+        try:
+            head = handle.read(65536)
+        except OSError:
+            return _format_from_extension(path), "name"
+
+        if not head:
+            return ArchiveFormat.UNKNOWN, ""
+
+        for magic, fmt in _MAGIC:
+            if head.startswith(magic):
+                return fmt, "content"
+
+        for magic, fmt, extensions in _AMBIGUOUS_MAGIC:
+            if head.startswith(magic) and ext in extensions:
+                return fmt, "content"
+
+        # POSIX tar keeps its magic at offset 257.
+        if len(head) > 262 and head[257:262] in (b"ustar",):
+            return ArchiveFormat.TAR, "content"
+
+        # LZH/LHA writes "-lh0-" .. "-lh7-" at offset 2.
+        if len(head) > 7 and head[2:4] == b"-l" and head[6:7] == b"-":
+            return ArchiveFormat.LZH, "content"
+
+        # ISO 9660 stores "CD001" in the primary volume descriptor.
+        try:
             handle.seek(32769)
             if handle.read(5) == b"CD001":
                 return ArchiveFormat.ISO, "content"
-    except OSError:
-        pass
+        except OSError:
+            pass
 
-    # Self-extracting archives bury the real header behind an executable stub.
-    looks_executable = head.startswith((b"\x7fELF", b"MZ", b"#!"))
-    if ext in _SFX_EXTENSIONS or looks_executable:
-        embedded = _scan_for_sfx(path)
-        if embedded is not ArchiveFormat.UNKNOWN:
-            return embedded, "sfx"
+        # Self-extracting archives bury the real header behind an executable
+        # stub.
+        looks_executable = head.startswith((b"\x7fELF", b"MZ", b"#!"))
+        if ext in _SFX_EXTENSIONS or looks_executable:
+            embedded = _scan_for_sfx(handle)
+            if embedded is not ArchiveFormat.UNKNOWN:
+                return embedded, "sfx"
+    finally:
+        handle.close()
 
     if ext in _TRAILER_FORMATS:
         return _TRAILER_FORMATS[ext], "name"
@@ -165,31 +180,33 @@ def _detect(path: str) -> tuple[ArchiveFormat, str]:
     return by_name, "name" if by_name is not ArchiveFormat.UNKNOWN else ""
 
 
-def _scan_for_sfx(path: str) -> ArchiveFormat:
-    """Search the leading part of a file for an embedded RAR/7z signature.
+def _scan_for_sfx(handle) -> ArchiveFormat:
+    """Search the leading part of an open file for an embedded RAR/7z header.
 
     Reads in chunks (with a small overlap so a signature split across a chunk
     boundary is still found) instead of loading the whole window at once.
+    Takes the handle its caller already has rather than a path, so identifying
+    one file never means opening it twice.
     """
     overlap = 8
     scanned = 0
     tail = b""
     try:
-        with open(path, "rb") as handle:
-            while scanned < _SFX_SCAN_BYTES:
-                chunk = handle.read(_SFX_CHUNK)
-                if not chunk:
-                    break
-                window = tail + chunk
-                index = window.find(b"Rar!\x1a\x07")
-                if index >= 0:
-                    if window[index : index + 8].startswith(b"Rar!\x1a\x07\x01\x00"):
-                        return ArchiveFormat.RAR5
-                    return ArchiveFormat.RAR4
-                if window.find(b"7z\xbc\xaf\x27\x1c") >= 0:
-                    return ArchiveFormat.SEVENZIP
-                tail = window[-overlap:]
-                scanned += len(chunk)
+        handle.seek(0)
+        while scanned < _SFX_SCAN_BYTES:
+            chunk = handle.read(_SFX_CHUNK)
+            if not chunk:
+                break
+            window = tail + chunk
+            index = window.find(b"Rar!\x1a\x07")
+            if index >= 0:
+                if window[index : index + 8].startswith(b"Rar!\x1a\x07\x01\x00"):
+                    return ArchiveFormat.RAR5
+                return ArchiveFormat.RAR4
+            if window.find(b"7z\xbc\xaf\x27\x1c") >= 0:
+                return ArchiveFormat.SEVENZIP
+            tail = window[-overlap:]
+            scanned += len(chunk)
     except OSError:
         pass
     return ArchiveFormat.UNKNOWN

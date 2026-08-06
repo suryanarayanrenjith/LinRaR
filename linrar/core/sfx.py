@@ -213,29 +213,90 @@ def harvest_runtime(donor: str, destination: str) -> bool:
     return True
 
 
+#: The most a runtime download may be.  The published stub is around 1 MB; the
+#: ceiling is what keeps a server that answers and never stops from filling
+#: this process's memory with something it will refuse anyway.
+RUNTIME_LIMIT = 16 * 1024 * 1024
+
+#: The least it may be, and what it has to start with.  The bytes are about to
+#: be written to the front of an executable somebody will run.
+RUNTIME_MINIMUM = 10000
+
+
+def _https_only_opener():
+    """An opener that refuses a redirect down to plain HTTP.
+
+    urllib follows one without a word, so checking the address LinRAR asked
+    for proves nothing on its own: the server chooses where the next request
+    goes, and this is a file that becomes the first bytes of an executable.
+
+    urllib is imported here rather than at the top of the module: it drags in
+    the whole networking and TLS stack, and the main window imports this
+    module at start-up for the SFX menu entry alone.
+    """
+    import urllib.error
+    import urllib.request
+
+    class HttpsOnly(urllib.request.HTTPRedirectHandler):
+        def redirect_request(self, req, fp, code, msg, headers, newurl):
+            if not newurl.lower().startswith("https://"):
+                raise urllib.error.URLError(
+                    f"refused a redirect to an insecure address: {newurl}"
+                )
+            return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+    return urllib.request.build_opener(HttpsOnly())
+
+
 def download_runtime(destination: str, timeout: int = 60) -> None:
-    """Fetch the official AppImage runtime for this architecture."""
+    """Fetch the official AppImage runtime for this architecture.
+
+    Written to a scratch file beside the destination and moved into place only
+    once it has been proved to be an ELF binary of a plausible size, so an
+    interrupted download can never be picked up later as a cached runtime.
+    """
     import urllib.error
     import urllib.request
 
     url = RUNTIME_URL.format(arch=runtime_arch())
+    if not url.lower().startswith("https://"):    # pragma: no cover - constant
+        raise OperationError(
+            f"The AppImage runtime address is not an HTTPS one:\n{url}"
+        )
+    opener = _https_only_opener()
     try:
         request = urllib.request.Request(url, headers={"User-Agent": "LinRAR"})
-        with urllib.request.urlopen(request, timeout=timeout) as response:
-            data = response.read()
+        with opener.open(request, timeout=timeout) as response:
+            data = response.read(RUNTIME_LIMIT + 1)
     except (urllib.error.URLError, OSError, TimeoutError) as exc:
         raise OperationError(
             "Could not download the AppImage runtime.\n\n"
             f"{url}\n\n{exc}\n\n"
             "Check your internet connection, or install 'appimagetool'."
         ) from exc
-    if len(data) < 10000 or data[:4] != b"\x7fELF":
+    if len(data) > RUNTIME_LIMIT:
+        raise OperationError(
+            "The AppImage runtime download did not stop where it should "
+            f"have, so it was refused.\n\n{url}"
+        )
+    if len(data) < RUNTIME_MINIMUM or data[:4] != b"\x7fELF":
         raise OperationError(
             "The downloaded AppImage runtime is not a valid executable."
         )
-    with open(destination, "wb") as handle:
-        handle.write(data)
-    os.chmod(destination, 0o755)
+    staging = f"{destination}.part"
+    try:
+        with open(staging, "wb") as handle:
+            handle.write(data)
+        os.chmod(staging, 0o755)
+        os.replace(staging, destination)
+    except OSError as exc:
+        try:
+            os.unlink(staging)
+        except OSError:
+            pass
+        raise OperationError(
+            f"The AppImage runtime could not be saved.\n\n{exc}"
+        ) from exc
 
 
 class RuntimeSource:
@@ -285,9 +346,9 @@ def _no_runtime_message() -> str:
         "No AppImage runtime is available.\n\n"
         "LinRAR needs the small AppImage runtime stub to build a "
         "self-extracting archive. It can be obtained by:\n\n"
-        "  • installing 'appimagetool', or\n"
-        "  • keeping any .AppImage file in ~/Applications or ~/Downloads, or\n"
-        "  • allowing LinRAR to download it once (about 1 MB)."
+        "  - installing 'appimagetool', or\n"
+        "  - keeping any .AppImage file in ~/Applications or ~/Downloads, or\n"
+        "  - allowing LinRAR to download it once (about 1 MB)."
     )
 
 

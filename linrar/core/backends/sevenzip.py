@@ -27,7 +27,7 @@ from ..models import (
     OverwriteMode,
     PasswordRequired,
 )
-from ..process import ProcessRunner, parse_percent
+from ..process import ProcessRunner, PtyUnavailable, parse_percent
 from .base import ArchiveBackend, TaskContext
 
 _PROGRESS_FILE_RE = re.compile(r"\d+%\s*\d*\s*[-+UT]?\s+(.+?)\s*$")
@@ -86,6 +86,7 @@ class SevenZipBackend(ArchiveBackend):
         ctx: Optional[TaskContext],
         allowed: tuple[int, ...] = (0,),
         cwd: Optional[str] = None,
+        prompt_answers: Optional[list[str]] = None,
     ) -> ProcessRunner:
         ctx = ctx or TaskContext()
         state = {"last": -1}
@@ -109,10 +110,20 @@ class SevenZipBackend(ArchiveBackend):
             if line.strip():
                 ctx.on_message(line.strip())
 
-        runner = ProcessRunner(argv, cwd=cwd, on_line=on_line, on_partial=observe)
+        runner = ProcessRunner(
+            argv, cwd=cwd, on_line=on_line, on_partial=observe,
+            prompt_answers=prompt_answers,
+        )
         ctx.attach(runner)
         try:
             code = runner.run()
+        except PtyUnavailable as exc:
+            raise OperationError(
+                "7-Zip has to be asked for the password at a terminal, and "
+                f"this system would not provide one.\n\n({exc})\n\n"
+                "Use the RAR format instead, which takes its password on "
+                "standard input."
+            ) from exc
         finally:
             ctx.detach()
 
@@ -141,35 +152,65 @@ class SevenZipBackend(ArchiveBackend):
 
     @staticmethod
     def _password_args(
-        password: Optional[str], write_command: bool = False
+        password: Optional[str],
+        write_command: bool = False,
+        prompt: bool = False,
     ) -> list[str]:
         """Build 7z's password switch.
 
-        Unlike rar, p7zip has no reliable way to read a password from a pipe, so
-        it must go on the command line.  On a multi-user machine that makes it
-        briefly visible in the process list; RAR and ZIP archives use stdin and
-        are not affected.  On a *read* command a bare ``-p`` supplies an empty
-        password so 7z fails fast on an encrypted archive instead of prompting.
+        A bare ``-p`` means two different things to 7-Zip depending on the
+        command, and both of them are wanted somewhere:
 
-        A **write** command gets no switch at all when there is no password.
-        What a bare ``-p`` means is not settled between builds — p7zip 16.02
-        reads it as an empty password, newer 7-Zip releases as "ask me" — and a
-        modifying command that decides to ask, with nothing on stdin, dies with
-        exit 255 rather than doing the work.  This is the same rule the rar
-        backend follows for the same reason, one tool along.
+        * to ``a``, it means **ask me**, and with a terminal attached (see
+          :meth:`_prompts`) LinRAR answers.  That is what *prompt* selects, and
+          it is how a password the user has just chosen stays out of the
+          process table, where on a stock Linux any other account can read
+          ``/proc/<pid>/cmdline`` for as long as the command runs.
+        * to ``l``, ``x`` and ``t`` it means **the empty password**, and no
+          prompt is offered whatever is on the other end of the terminal.  That
+          is deliberately used when there is no password, so 7z fails fast on
+          an encrypted archive instead of stopping to ask.
+
+        The consequence is that *reading* an encrypted archive has to pass the
+        password in the command line: 7-Zip offers no other way in, and
+        inventing one by feeding it an answer it never asks for would only make
+        every extraction fail.  Only rar takes a password on standard input for
+        every command, which is why the archive dialog recommends it.
+
+        A *write* command with no password gets no switch at all: one that
+        decides to ask when nothing is going to answer dies with exit 255
+        rather than doing the work.
         """
         if password:
-            return [f"-p{password}"]
+            return ["-p"] if prompt else [f"-p{password}"]
         return [] if write_command else ["-p"]
+
+    @staticmethod
+    def _prompts(password: Optional[str]) -> list[str]:
+        """The answers to type at 7-Zip's prompt when creating an archive.
+
+        It asks twice, once to set the password and once to verify it.  A
+        spare answer would be harmless anyway: one is only typed while the
+        child is still running and has fallen silent.
+        """
+        return [password, password] if password else []
 
     def run_raw(
         self,
         argv: list[str],
         ctx: Optional[TaskContext] = None,
         cwd: Optional[str] = None,
+        password: Optional[str] = None,
     ) -> ProcessRunner:
-        """Run an arbitrary pre-built 7z command (used by the ZIP fallback)."""
-        return self._run(argv, ctx, allowed=(0, 1), cwd=cwd)
+        """Run an arbitrary pre-built 7z command (used by the ZIP fallback).
+
+        *password* is typed at the prompt rather than written into *argv*; the
+        caller is expected to have put a bare ``-p`` in the command.
+        """
+        return self._run(
+            argv, ctx, allowed=(0, 1), cwd=cwd,
+            prompt_answers=self._prompts(password),
+        )
 
     # -- reading -----------------------------------------------------------
 
@@ -182,7 +223,9 @@ class SevenZipBackend(ArchiveBackend):
             None,
             allowed=(0, 1),
         )
-        return self._parse_listing(runner.output, path)
+        info = self._parse_listing(runner.output, path)
+        self.check_entry_count(len(info.entries), path)
+        return info
 
     # 7z's "Type" field mapped back to our format enum, so the Info dialog does
     # not claim every tar/gz/iso is a "7-Zip" archive.
@@ -391,7 +434,12 @@ class SevenZipBackend(ArchiveBackend):
         if options.volume_size > 0:
             argv.append(f"-v{options.volume_size}b")
         if options.password:
-            argv.append(f"-p{options.password}")
+            # Bare, so 7-Zip asks and the secret never reaches the process
+            # table.  This works for "a" and only for "a"; see _password_args.
+            argv.extend(
+                self._password_args(options.password, write_command=True,
+                                    prompt=True)
+            )
             if options.encrypt_headers:
                 argv.append("-mhe=on")
 
@@ -422,7 +470,10 @@ class SevenZipBackend(ArchiveBackend):
         try:
             argv.extend(["--", archive])
             argv.extend(members)
-            runner = self._run(argv, ctx, allowed=(0, 1), cwd=base or None)
+            runner = self._run(
+                argv, ctx, allowed=(0, 1), cwd=base or None,
+                prompt_answers=self._prompts(options.password),
+            )
             # 7z reports a file it could not read as a *warning* and still
             # exits 1, which is an allowed status here; without this the
             # archive would come out quietly short of the files the user
@@ -432,10 +483,47 @@ class SevenZipBackend(ArchiveBackend):
             if staging:
                 shutil.rmtree(staging, ignore_errors=True)
 
+        if options.password:
+            self._require_encrypted(archive)
         if staging and options.delete_after:
             _delete_sources(files)
         if options.test_after:
             self.test(options.archive_path, options.password, ctx)
+
+    def _require_encrypted(self, path: str) -> None:
+        """Prove the archive just written really needs the password.
+
+        The password is typed at a prompt rather than passed in the command
+        line, and a build that read the bare ``-p`` as "no password at all"
+        would produce an archive anybody can open while reporting success.
+        Listing it with an empty password settles it: an archive with
+        encrypted headers refuses outright, and one without says entry by
+        entry whether its contents are encrypted.
+
+        A listing, not a test: this runs after every encrypted archive, and
+        unpacking one again to check it would double the work.  Only the files
+        are asked about; a stored folder has nothing in it to encrypt and
+        reports ``Encrypted = -`` however the archive was made.
+        """
+        exe = self._require()
+        runner = ProcessRunner([exe, "l", "-slt", "-p", "--", path])
+        if runner.run() != 0:
+            # It would not open without the password.  That is the answer.
+            return
+        entries = [
+            entry for entry in self._parse_listing(runner.output, path).entries
+            if not entry.is_dir
+        ]
+        if not entries or all(entry.encrypted for entry in entries):
+            return
+        _silent_unlink(path)
+        raise OperationError(
+            "The archive was written without encryption, so it has been "
+            "discarded.\n\n"
+            "7-Zip accepted the password but did not apply it, which some "
+            "older builds do.\n\n"
+            "Use the RAR format instead, which encrypts natively."
+        )
 
     def _stage_flat(
         self,
@@ -448,7 +536,7 @@ class SevenZipBackend(ArchiveBackend):
 
         WinRAR's "do not store paths" has no equivalent switch in 7-Zip, and
         the two obvious ways of faking it are both wrong.  Handing 7z bare base
-        names — which LinRAR used to do — leaves it unable to find anything in
+        names, which LinRAR used to do, leaves it unable to find anything in
         a subfolder, and it reports that as a warning and quietly builds an
         archive without them.  Renaming the members afterwards with ``7z rn``
         works, but only on some builds: it is a fifteen-year-old command whose
@@ -457,8 +545,8 @@ class SevenZipBackend(ArchiveBackend):
 
         So the layout is built on disk instead and only ``7z a`` is used, which
         every build agrees about.  Each file is **hard-linked** into the
-        scratch folder — free, and beside the archive so it usually lands on
-        the same filesystem — falling back to a copy across devices.
+        scratch folder: free, and beside the archive so it usually lands on
+        the same filesystem, falling back to a copy across devices.
 
         A base name already taken keeps its folder, exactly as before: losing
         one of two files to a silent overwrite is worse than storing one of
@@ -624,8 +712,8 @@ def _link_or_copy(source: str, target: str) -> None:
 
     A hard link costs nothing and is what happens whenever the scratch folder
     and the file are on the same filesystem, which is the usual case because
-    the folder is made beside the archive.  Across devices — or where links
-    are not supported at all — there is no choice but to copy.
+    the folder is made beside the archive.  Across devices, or where links
+    are not supported at all, there is no choice but to copy.
     """
     try:
         os.link(source, target)
@@ -633,6 +721,13 @@ def _link_or_copy(source: str, target: str) -> None:
     except OSError:
         pass
     shutil.copy2(source, target)
+
+
+def _silent_unlink(path: str) -> None:
+    try:
+        os.unlink(path)
+    except OSError:
+        pass
 
 
 def _delete_sources(paths: list[str]) -> None:

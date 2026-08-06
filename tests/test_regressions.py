@@ -8,9 +8,10 @@ hex dump.  They need no archive tools, so this file always runs.
 import json
 import os
 import shutil
-import subprocess
+import stat
 import sys
 import tempfile
+import zipfile
 
 os.environ["QT_QPA_PLATFORM"] = "offscreen"
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -24,8 +25,20 @@ from PyQt6.QtWidgets import QApplication
 
 app = QApplication([])
 
-from linrar.core import filetypes
+from linrar import version as versions
+from linrar.core import filetypes, updater
+from linrar.core.backends import base
+from linrar.core.backends.base import TaskContext
+from linrar.core.backends.rar import RarBackend
 from linrar.core.backends.sevenzip import SevenZipBackend  # noqa: F401 (used below)
+from linrar.core.backends.zip import ZipBackend
+from linrar.core.models import (
+    ArchiveFormat,
+    CompressOptions,
+    ExtractOptions,
+    OperationError,
+    OverwriteMode,
+)
 from linrar.core.profiles import DEFAULT_PROFILES, Profile, PROFILES
 from linrar.core.settings import SETTINGS, Settings
 from linrar.ui import filelist
@@ -49,7 +62,7 @@ def check(name, cond, extra=""):
 print("== column widths survive a restart")
 # configure_columns applied its factory widths the first time a listing was
 # built, and the first listing is built *after* the saved header state is
-# restored — so the widths the user chose were overwritten on every launch.
+# restored, so the widths the user chose were overwritten on every launch.
 window = MainWindow()
 window.list_view.details.setColumnWidth(filelist.COL_NAME, 417)
 SETTINGS.save_geometry("columns", window.list_view.header_state())
@@ -87,7 +100,7 @@ for index in range(20):
     store.push_recent(f"/tmp/fill{index}.rar")
 check("the list is bounded", len(store.recent()) <= 12, len(store.recent()))
 store.sync()
-check("and survives a restart — in a second process, never one",
+check("and survives a restart, in a second process, never one",
       Settings(store.path).recent() == store.recent())
 check("recent archives are kept apart from the folder history",
       "/tmp/one.rar" not in store.history(), store.history())
@@ -335,6 +348,151 @@ check("but the file name survives", shown.endswith("archive.rar"), shown)
 check("and home is written as ~", _shorten_path(os.path.expanduser("~/a.rar"))
       == "~/a.rar", _shorten_path(os.path.expanduser("~/a.rar")))
 check("a short path is left alone", _shorten_path("/tmp/a.rar") == "/tmp/a.rar")
+
+print("== the settings file is not readable by other accounts")
+# It records where this user has been, what they opened, and on a machine with
+# no keyring their saved archive passwords.  Qt wrote it with the process
+# umask, which on most distributions leaves it world-readable.
+private = Settings(os.path.join(SCRATCH, "private", "linrar.conf"))
+private.set("places/last_folder", "/home/somebody/Private")
+private.sync()
+mode = stat.S_IMODE(os.stat(private.path).st_mode)
+check("the config file is 0600", mode == 0o600, oct(mode))
+folder_mode = stat.S_IMODE(os.stat(os.path.dirname(private.path)).st_mode)
+check("and its folder is 0700", folder_mode == 0o700, oct(folder_mode))
+
+print("== a ZIP cannot write outside where it is being unpacked")
+# Three ways out, all of which used to work to some degree: a "../" member, a
+# symbolic link to an absolute path, and one that climbs out with "..".
+evil = os.path.join(work, "evil.zip")
+with zipfile.ZipFile(evil, "w") as archive:
+    archive.writestr("ordinary.txt", "fine\n")
+    archive.writestr("../escaped.txt", "should never be written\n")
+    for name, target in (("absolute", "/etc"), ("climbing", "../../etc")):
+        link = zipfile.ZipInfo(name)
+        link.external_attr = (stat.S_IFLNK | 0o777) << 16
+        archive.writestr(link, target)
+    inside = zipfile.ZipInfo("inside")
+    inside.external_attr = (stat.S_IFLNK | 0o777) << 16
+    archive.writestr(inside, "ordinary.txt")
+
+unpacked = os.path.join(work, "unpacked")
+said = []
+ZipBackend().extract(
+    evil,
+    ExtractOptions(destination=unpacked, overwrite_mode=OverwriteMode.OVERWRITE),
+    TaskContext(on_message=said.append),
+)
+check("the ordinary member is written",
+      os.path.isfile(os.path.join(unpacked, "ordinary.txt")))
+check("a '../' member is not",
+      not os.path.exists(os.path.join(work, "escaped.txt")))
+check("a link to an absolute path is refused",
+      not os.path.lexists(os.path.join(unpacked, "absolute")))
+check("so is one that climbs out",
+      not os.path.lexists(os.path.join(unpacked, "climbing")))
+check("but a link that stays inside is still made",
+      os.path.islink(os.path.join(unpacked, "inside")))
+check("and every refusal is reported rather than silent",
+      sum("unsafe" in message for message in said) == 3, said)
+
+print("== an archive LinRAR writes is not private to whoever wrote it")
+# Built through a temporary file, which mkstemp creates 0600; without putting
+# the mode back, every ZIP LinRAR made came out unreadable by anybody else.
+made = os.path.join(work, "made.zip")
+ZipBackend().create(
+    [os.path.join(unpacked, "ordinary.txt")],
+    CompressOptions(archive_path=made, format=ArchiveFormat.ZIP,
+                    base_folder=unpacked),
+)
+check("a created archive keeps the umask's mode",
+      stat.S_IMODE(os.stat(made).st_mode) != 0o600,
+      oct(stat.S_IMODE(os.stat(made).st_mode)))
+os.chmod(made, 0o640)
+ZipBackend().rename_member(made, "ordinary.txt", "renamed.txt")
+check("and editing one keeps the mode it had",
+      stat.S_IMODE(os.stat(made).st_mode) == 0o640,
+      oct(stat.S_IMODE(os.stat(made).st_mode)))
+
+print("== a listing too large to hold is refused before it is built")
+try:
+    ZipBackend.check_entry_count(base.MAX_ENTRIES + 1, "/tmp/enormous.zip")
+    check("an absurd entry count raises", False)
+except OperationError as error:
+    check("an absurd entry count raises", "enormous.zip" in str(error))
+ZipBackend.check_entry_count(base.MAX_ENTRIES, "/tmp/large.zip")
+check("and the cap itself is allowed", True)
+
+print("== rar's missing '--' cannot be exploited by a member name")
+# rar reads any argument beginning with a dash as a switch, wherever it
+# appears, and 'rn' is the one command that passes member names in argv.
+try:
+    RarBackend()._reject_switch_names(["fine.txt", "-x@/etc/passwd"])
+    check("a member named like a switch is refused", False)
+except OperationError as error:
+    check("a member named like a switch is refused",
+          "-x@/etc/passwd" in str(error))
+RarBackend()._reject_switch_names(["ordinary.txt", "with-a-dash.txt"])
+check("while ordinary names are left alone", True)
+
+print("== the updater refuses a manifest it should not act on")
+base_manifest = {
+    "schema": versions.MANIFEST_SCHEMA,
+    "version": "99.0.0",
+    "artifacts": [{
+        "kind": "source", "name": "linrar-99.0.0.tar.gz", "size": 4096,
+        "sha256": "a" * 64,
+        "url": "https://example.invalid/linrar-99.0.0.tar.gz",
+    }],
+}
+
+
+def manifest_with(**artifact_fields):
+    body = json.loads(json.dumps(base_manifest))
+    body["artifacts"][0].update(artifact_fields)
+    return json.dumps(body).encode()
+
+
+check("a sound manifest is accepted",
+      updater.parse_manifest(manifest_with()).version == "99.0.0")
+for label, fields in (
+    ("a download over plain HTTP",
+     {"url": "http://example.invalid/linrar-99.0.0.tar.gz"}),
+    ("a name that is really a path", {"name": "../../evil.tar.gz"}),
+    ("a checksum that is not hexadecimal", {"sha256": "z" * 64}),
+    ("a size nothing could be", {"size": 10 ** 12}),
+    ("a size of nothing at all", {"size": 0}),
+):
+    try:
+        updater.parse_manifest(manifest_with(**fields))
+        check(f"refuses {label}", False)
+    except updater.UpdateError:
+        check(f"refuses {label}", True)
+check("and a redirect down to HTTP is refused too",
+      updater.REQUIRE_HTTPS and hasattr(updater._HttpsOnlyRedirects,
+                                        "redirect_request"))
+
+print("== Back and Forward agree about archives")
+# They were written separately, and only Back knew an entry could be an
+# archive: stepping Forward out of one and Back again landed in the folder the
+# archive lives in rather than inside it.
+import inspect
+
+back = inspect.getsource(MainWindow.go_back)
+forward = inspect.getsource(MainWindow.go_forward)
+check("both are the same one step, with the stacks swapped",
+      "_step(self._back, self._forward)" in back
+      and "_step(self._forward, self._back)" in forward)
+check("and open_archive can be told not to rewrite the history",
+      "record" in inspect.signature(MainWindow.open_archive).parameters)
+
+print("== a row works out what it is once, not once per repaint")
+row = filelist.ListingItem(name="photo.jpeg", path="/tmp/photo.jpeg")
+first_type, first_icon = row.type_name, row.icon_name
+check("the type is remembered", row.type_name is first_type)
+check("and so is the icon", row.icon_name is first_icon)
+check("the answer is still the right one",
+      "JPEG" in first_type.upper() or "image" in first_type.lower(), first_type)
 
 shutil.rmtree(work, ignore_errors=True)
 shutil.rmtree(SCRATCH, ignore_errors=True)

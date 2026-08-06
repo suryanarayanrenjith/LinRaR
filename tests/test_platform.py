@@ -6,11 +6,11 @@ each other instead:
 
   * ``install.sh`` maps a distribution to a package manager, and
     ``core/packages.py`` maps the same distributions for the Dependencies
-    window — a name in one and not the other means the installer and the
+    window: a name in one and not the other means the installer and the
     application would disagree about how software gets onto the machine;
   * every package manager either script names must know how to install with;
   * the architecture tables, which decide whether LinRAR offers something it
-    cannot deliver — ``rar`` on POWER, an AppImage on RISC-V.
+    cannot deliver: ``rar`` on POWER, an AppImage on RISC-V.
 
 The file-manager integrations are checked as text: whether they are *written*
 is proved by running the installer, which ``test_config.py`` and CI do.
@@ -36,7 +36,6 @@ print("== the architecture this is running on")
 arch = platform_check.architecture()
 check("it has a name", bool(arch.key), arch)
 check("and a label", bool(arch.label))
-check("describe_machine says something", bool(platform_check.describe_machine()))
 check("machine() agrees with uname -m",
       platform_check.machine() == (os.uname().machine or "").lower())
 

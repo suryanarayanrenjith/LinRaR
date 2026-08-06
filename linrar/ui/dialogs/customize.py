@@ -119,8 +119,8 @@ class CustomizeDialog(QDialog):
         middle.addStretch(1)
         self._arrange_buttons: list[QPushButton] = []
         for label, slot in (
-            ("Add →", self._add),
-            ("← Remove", self._remove),
+            ("Add >>", self._add),
+            ("<< Remove", self._remove),
             ("Separator", self._add_separator),
         ):
             button = QPushButton(label)
@@ -157,7 +157,7 @@ class CustomizeDialog(QDialog):
         form = QFormLayout(appearance)
         self.icon_size_combo = QComboBox()
         for size in TOOLBAR_ICON_SIZES:
-            self.icon_size_combo.addItem(f"{size} × {size} pixels", size)
+            self.icon_size_combo.addItem(f"{size} x {size} pixels", size)
         current_size = int(SETTINGS.get("toolbar/icon_size"))
         index = self.icon_size_combo.findData(current_size)
         self.icon_size_combo.setCurrentIndex(max(index, 0))
@@ -498,7 +498,7 @@ def _make_item(key: str, captions: dict[str, str]) -> QListWidgetItem:
 #: The toolbar catalogue keeps captions; the icons live here so the picker can
 #: show the same glyph the button will.  Every key in
 #: :data:`~linrar.ui.main_window.TOOLBAR_CATALOGUE` must appear here or the
-#: picker offers a blank row for a button that does have an icon — the test
+#: picker offers a blank row for a button that does have an icon; the test
 #: suite checks the two lists still agree.
 _ICONS = {
     "add": "add", "extract_to": "extract-to", "extract_here": "extract",
@@ -513,5 +513,5 @@ _ICONS = {
     "favorite": "folder", "password": "key", "passwords": "key",
     "profiles": "add", "benchmark": "test", "dependencies": "package",
     "settings": "settings", "customize": "settings", "help": "help",
-    "update": "download", "theme": "theme-dark",
+    "update": "download", "themes": "themes",
 }

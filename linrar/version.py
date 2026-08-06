@@ -1,6 +1,6 @@
 """LinRAR's version, and everything that has to agree about it.
 
-One string — :data:`__version__` — is the whole truth.  The About box, the
+One string, :data:`__version__`, is the whole truth.  The About box, the
 ``--version`` line, the installer's receipt, the git tag, the release tarball's
 name and the update manifest are all derived from it, so there is no second
 copy anywhere to drift out of step.  ``install.sh`` reads it out of this file
@@ -11,7 +11,7 @@ promise rather than decoration, because a future updater has to be able to
 decide *on its own* whether what it found on the server is worth installing:
 
 ``MAJOR``
-    Something a user relies on changed or went away — a command line flag, a
+    Something a user relies on changed or went away: a command line flag, a
     settings key that is no longer read, a dropped format.
 ``MINOR``
     New behaviour, nothing taken away.  Upgrading is always safe.
@@ -25,7 +25,7 @@ an updater that only wants stable builds can simply skip any version whose
 Two versions are compared with :func:`compare` or :func:`is_newer`, never by
 comparing the strings: ``"2.10.0" < "2.9.0"`` is true for text and false for
 software.  Build metadata (the ``+g1a2b3c`` an artifact is stamped with) is
-ignored when ranking, exactly as the specification requires — it says *which
+ignored when ranking, exactly as the specification requires; it says *which
 build*, not *which version*.
 
 This module imports nothing but the standard library, and deliberately no
@@ -67,16 +67,19 @@ __all__ = [
     "RELEASES_URL",
     "REPOSITORY_URL",
     "PROJECT",
+    "WEBSITE_URL",
+    "THEMES_URL",
+    "THEME_BUILDER_URL",
 ]
 
 #: The version of LinRAR this source tree *is*.  Bump it with
 #: ``tools/release.py bump {patch|minor|major|X.Y.Z}`` rather than by hand: the
 #: same command moves the CHANGELOG's "Unreleased" section under the new
 #: number, which is what the release notes are cut from.
-__version__ = "2.1.0"
+__version__ = "2.5.0"
 
 #: The oldest Python this release runs on.  ``install.sh`` refuses anything
-#: older, the update manifest advertises it, and a test keeps the two honest —
+#: older, the update manifest advertises it, and a test keeps the two honest;
 #: an updater must not hand a machine a version its interpreter cannot run.
 REQUIRES_PYTHON = "3.9"
 
@@ -87,8 +90,16 @@ PROJECT = "suryanarayanrenjith/LinRAR"
 REPOSITORY_URL = f"https://github.com/{PROJECT}"
 RELEASES_URL = f"{REPOSITORY_URL}/releases"
 
+#: LinRAR's own site, and the two pages the Themes window sends people to.
+#: Themes are not shipped with the application -- it has the light and dark
+#: themes drawn into it and nothing else -- so these are how anybody gets more,
+#: and the interface has to say so where the choosing happens.
+WEBSITE_URL = "https://linrar.vercel.app/"
+THEMES_URL = f"{WEBSITE_URL}themes"
+THEME_BUILDER_URL = f"{WEBSITE_URL}create"
+
 #: The unauthenticated GitHub API endpoint describing the newest release.
-#: Usable, but rate limited to 60 requests an hour per address — which is why
+#: Usable, but rate limited to 60 requests an hour per address, which is why
 #: :data:`MANIFEST_URL` exists and is what an updater should actually poll.
 LATEST_RELEASE_API = f"https://api.github.com/repos/{PROJECT}/releases/latest"
 
@@ -151,7 +162,7 @@ class Version:
 
     @property
     def release(self) -> Tuple[int, int, int]:
-        """``(major, minor, patch)`` — the part that carries the promise."""
+        """``(major, minor, patch)``: the part that carries the promise."""
         return (self.major, self.minor, self.patch)
 
     @property
@@ -160,7 +171,7 @@ class Version:
 
     @property
     def channel(self) -> str:
-        """``"stable"`` or ``"prerelease"`` — which audience it is for."""
+        """``"stable"`` or ``"prerelease"``, which audience it is for."""
         return "prerelease" if self.is_prerelease else "stable"
 
     @property
@@ -262,7 +273,7 @@ def parse(text: Union[str, Version]) -> Version:
 def try_parse(text: Union[str, Version, None]) -> Optional[Version]:
     """:func:`parse`, but ``None`` instead of an exception.
 
-    For reading a version out of something that may be malformed — a manifest
+    For reading a version out of something that may be malformed: a manifest
     off the network, a receipt written by an older install.
     """
     if text is None:
@@ -306,8 +317,8 @@ def is_newer(
 # --------------------------------------------------------------- this build
 #
 # tools/package.sh writes linrar/_build.py into a release artifact, recording
-# which commit it was cut from and when.  A source checkout has no such file —
-# and must not, or every working tree would claim to be a release — so its
+# which commit it was cut from and when.  A source checkout has no such file,
+# and must not, or every working tree would claim to be a release, so its
 # absence is the normal case and never an error.
 
 _BUILD: Dict[str, str] = {}
@@ -339,7 +350,7 @@ def is_release_build() -> bool:
 
 
 def channel() -> str:
-    """``stable``, ``prerelease`` or ``source`` — what this copy is.
+    """``stable``, ``prerelease`` or ``source``: what this copy is.
 
     ``source`` means a working tree or a plain clone: it carries a version
     number, but nobody published it, so an updater should leave it alone.
@@ -367,7 +378,7 @@ def full_version() -> str:
 def describe() -> str:
     """One line for ``--version`` and the About box.
 
-    Machine-readable at the front — the version is always the first field —
+    Machine-readable at the front, the version is always the first field,
     with the build's identity in brackets when there is one to give.
     """
     if not is_release_build():
@@ -420,10 +431,10 @@ def describe_state() -> str:
     """What to show a user who may be running one version and have another.
 
     The same as :func:`describe` until an update lands mid-session, and after
-    that it says both — an About box that reports the old number with no
+    that it says both; an About box that reports the old number with no
     explanation reads as an update that did not work.
     """
     if not restart_pending():
         return describe()
-    return (f"{describe()} — {installed_version()} is installed, "
+    return (f"{describe()}; {installed_version()} is installed, "
             "restart to use it")

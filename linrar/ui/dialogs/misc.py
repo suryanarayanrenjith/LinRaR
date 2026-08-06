@@ -27,7 +27,6 @@ from PyQt6.QtWidgets import (
     QStackedWidget,
     QTabWidget,
     QTextBrowser,
-    QTextEdit,
     QVBoxLayout,
     QWidget,
 )
@@ -38,17 +37,14 @@ from ...core.registry import REGISTRY
 from ...core import settings as settings_module
 from ...core.settings import SETTINGS
 from ... import version as version_module
-from ...version import REPOSITORY_URL, __version__, describe
+from ...version import REPOSITORY_URL, WEBSITE_URL
 from .. import icons, policy, theme
 
-#: Kept under its old name because the whole interface says "APP_VERSION", but
-#: there is only one version now and it lives in linrar/version.py.
-APP_VERSION = __version__
 AUTHOR = "Surya"
 PORTFOLIO = "https://surya.is-a.dev/"
 #: LinRAR's own home on the web, and where its source lives.  Both are shown
 #: in About and are the two links the README points at.
-WEBSITE = "https://linrar.vercel.app/"
+WEBSITE = WEBSITE_URL
 REPOSITORY = REPOSITORY_URL
 
 
@@ -160,11 +156,11 @@ class ViewerDialog(QDialog):
 
     * **text and source** as text, in whatever encoding it turns out to be;
     * **images** as images, scaled to fit;
-    * **Word, PowerPoint, Excel, OpenDocument and EPUB** as their text — those
+    * **Word, PowerPoint, Excel, OpenDocument and EPUB** as their text; those
       are all ZIP containers full of XML, and the text can be lifted out of
       them with nothing but the standard library;
     * **archives** with an offer to open them in LinRAR proper;
-    * and everything genuinely opaque as a hex dump — but with the file named
+    * and everything genuinely opaque as a hex dump, but with the file named
       and identified above it, and the desktop's own application one button
       away, rather than as an unexplained wall of hex.
 
@@ -234,7 +230,7 @@ class ViewerDialog(QDialog):
         title.setFont(font)
         title.setTextFormat(Qt.TextFormat.PlainText)
         subtitle = QLabel(
-            f"{self.file_type.label} · {format_size_short(len(self.data))}"
+            f"{self.file_type.label}, {format_size_short(len(self.data))}"
         )
         subtitle.setObjectName("Hint")
         text.addWidget(title)
@@ -318,7 +314,7 @@ class ViewerDialog(QDialog):
                 self._set_text(text)
                 self._say(
                     f"The text of this {self.file_type.label}. Formatting, "
-                    "images and layout are not shown — \"Open with...\" opens "
+                    "images and layout are not shown; \"Open with...\" opens "
                     "it in the application that owns it."
                 )
                 return
@@ -362,7 +358,7 @@ class ViewerDialog(QDialog):
         self.pages.setCurrentWidget(self.image_view)
         self.btn_text.setChecked(False)
         self.btn_hex.setChecked(False)
-        self._say(f"{pixmap.width()} × {pixmap.height()} pixels, "
+        self._say(f"{pixmap.width()} x {pixmap.height()} pixels, "
                   f"{self.file_type.label}")
         return True
 
@@ -452,7 +448,7 @@ _VIEWER_ICONS = {
 
 
 def _article(label: str) -> str:
-    """"a ZIP archive" / "an Ogg media file" — for a sentence, not a table."""
+    """"a ZIP archive" / "an Ogg media file": for a sentence, not a table."""
     lowered = label[:1].lower() + label[1:]
     return f"{'an' if lowered[:1] in 'aeiou' else 'a'} {lowered}"
 
@@ -611,14 +607,19 @@ class SettingsDialog(QDialog):
         theme_row = QFormLayout()
         theme_row.setContentsMargins(0, 0, 0, 4)
         self.theme_combo = QComboBox()
-        for name in theme.MODES:
-            self.theme_combo.addItem(
-                icons.icon(f"theme-{name}"), theme.MODE_LABELS[name], name
-            )
-        # The live theme wins: it is what the user is looking at right now.
-        active = self.theme_combo.findData(theme.mode())
-        self.theme_combo.setCurrentIndex(max(active, 0))
-        theme_row.addRow("Colour theme", self.theme_combo)
+        self._refill_themes()
+        theme_box = QHBoxLayout()
+        theme_box.setSpacing(6)
+        theme_box.addWidget(self.theme_combo, 1)
+        self.theme_button = QPushButton("Themes...")
+        self.theme_button.setIcon(icons.icon("themes"))
+        self.theme_button.setToolTip(
+            "Preview every theme, install one you downloaded, or find more "
+            "on the website"
+        )
+        self.theme_button.clicked.connect(self._open_themes)
+        theme_box.addWidget(self.theme_button, 0)
+        theme_row.addRow("Colour theme", theme_box)
         interface_layout.addLayout(theme_row)
 
         self.tree_check = QCheckBox("Show the folder tree")
@@ -667,6 +668,9 @@ class SettingsDialog(QDialog):
             "update/automatic": self.update_auto,
             "update/prereleases": self.update_pre,
         })
+        # The manager is where a theme is *chosen*, so a locked theme closes
+        # it too; installing one that could never be selected is no favour.
+        policy.guard(self.theme_button, "view/theme")
         # The two toolbar checkboxes are one setting each, but Customize is the
         # full version of both: disable it only when neither can be changed.
         if policy.guard(self.toolbar_text_check, "toolbar/style"):
@@ -678,7 +682,7 @@ class SettingsDialog(QDialog):
         return page
 
     def _updates_group(self) -> QGroupBox:
-        """How LinRAR keeps itself current — off until it is asked.
+        """How LinRAR keeps itself current; off until it is asked.
 
         Checking is a network request the user did not make, so nothing here
         starts switched on, and an administrator can lock the whole ``update/``
@@ -999,6 +1003,38 @@ class SettingsDialog(QDialog):
             int(SETTINGS.get("toolbar/icon_size")) >= 32
         )
 
+    def _refill_themes(self) -> None:
+        """Fill the theme combo from what is installed.
+
+        Called again after the Theme Manager closes, which may have added or
+        deleted one.  A pack's row is drawn from the pack's own icon build, so
+        the list shows what each theme looks like rather than a dozen copies of
+        the one already in force.
+        """
+        wanted = theme.active()
+        self.theme_combo.blockSignals(True)
+        self.theme_combo.clear()
+        for name in theme.available():
+            variant = theme.variant_of(theme.colors_for(name))
+            self.theme_combo.addItem(
+                icons.icon_for(name, f"theme-{variant}"), theme.label(name), name
+            )
+        # The live theme wins: it is what the user is looking at right now.
+        self.theme_combo.setCurrentIndex(
+            max(self.theme_combo.findData(wanted), 0)
+        )
+        self.theme_combo.blockSignals(False)
+
+    def _open_themes(self) -> None:
+        """The full chooser, with its previews, from the one line here."""
+        from .themes import ThemeManagerDialog
+
+        window = self.parent()
+        ThemeManagerDialog(window if window is not None else self).exec()
+        if window is not None and hasattr(window, "_sync_theme_widgets"):
+            window._sync_theme_widgets()
+        self._refill_themes()
+
     def _save(self) -> None:
         SETTINGS.set("view/theme", self.theme_combo.currentData())
         SETTINGS.set("view/show_tree", self.tree_check.isChecked())
@@ -1046,7 +1082,7 @@ class AboutDialog(QDialog):
             "<div style='font-size:15pt; font-weight:bold'>LinRAR "
             "<span style='font-weight:normal'>for Linux</span></div>"
             f"<div style='color:{colors.text_dim}; margin-top:2px'>"
-            f"Version {version_module.describe_state()} &nbsp;·&nbsp; PyQt6</div>"
+            f"Version {version_module.describe_state()} &nbsp;-&nbsp; PyQt6</div>"
             "<div style='margin-top:9px'>A native Linux archive manager with "
             "the classic WinRAR interface, built on top of the <b>rar</b>, "
             "<b>unrar</b> and <b>7z</b> command line tools.</div>"
@@ -1291,13 +1327,13 @@ def _help_overview() -> str:
         "<b>Backspace</b> goes up, <b>Ctrl+L</b> lets you type a path, and "
         "<b>F5</b> lists the folder again and clears any find filter. "
         "<b>File &gt; Open recent</b> keeps the archives you opened lately, and "
-        "files can be dragged straight out of the list — including out of an "
+        "files can be dragged straight out of the list, including out of an "
         "open archive, which unpacks them on the way.</p>"
         + _section("Finding things")
         + "<p><b>Ctrl+F</b> asks for a name mask and, if you want it, some "
         "text. A mask on its own filters the list in place. Add text and "
-        "LinRAR reads the files themselves — inside the open archive, or "
-        "through the current folder and everything under it — and lists every "
+        "LinRAR reads the files themselves, inside the open archive, or "
+        "through the current folder and everything under it, and lists every "
         "line that contains it.</p>"
         + "<p><b>Ctrl+K</b> works out CRC32, MD5, SHA-1, SHA-256 and SHA-512 "
         "for whatever is selected, on disk or inside an archive, in one pass "
@@ -1320,7 +1356,7 @@ def _help_overview() -> str:
         "one in the same step, and choose the kind beside it: an "
         "<b>AppImage</b>, which unpacks itself on any Linux machine with "
         "nothing installed, or rar's smaller <b>.sfx stub</b>. "
-        "<b>Options…</b> opens the full SFX module. An archive that already "
+        "<b>Options...</b> opens the full SFX module. An archive that already "
         "exists is converted the same way from <b>Commands &gt; Convert "
         "archive to SFX</b> (Alt+S).</p>"
         + _section("Extracting")
@@ -1334,11 +1370,23 @@ def _help_overview() -> str:
         "<b>Repair</b> (Alt+R) puts both to work. <b>Alt+S</b> turns an archive "
         "into a self-extracting AppImage.</p>"
         + _section("Appearance")
-        + "<p>The light and dark themes live under <b>Options &gt; Theme</b>, "
-        "on the switch at the right end of the toolbar, or on "
-        "<b>Ctrl+Shift+T</b>. The toolbar, the folder tree, the comment pane "
-        "and the file-list columns can all be turned on and off from the same "
-        "menu.</p>"
+        + "<p>One button changes how LinRAR looks: the <b>palette</b> in the "
+        "menu bar's corner, <b>Options &gt; Themes</b>, or "
+        "<b>Ctrl+Shift+M</b>. The toolbar, the folder tree, the comment pane "
+        "and the file-list columns are turned on and off from "
+        "<b>Options &gt; Layout</b> and <b>Options &gt; File list</b>.</p>"
+        + "<p>The theme manager lists the light and dark themes drawn into "
+        "LinRAR and every one you have installed, and shows each as a working "
+        "miniature of this window before you apply it: a theme changes all "
+        "thirty-nine icons as thoroughly as it changes the chrome. Ten more are "
+        "at <b>linrar.vercel.app/themes</b>, and "
+        "<b>linrar.vercel.app/create</b> builds one from a dozen colours.</p>"
+        + "<p><b>Drag a theme onto that window to install it</b>: a folder or a "
+        "<b>.linrar-theme</b> file, however many at once. The window names the "
+        "folder they are kept in, and dropping one straight in there works too. "
+        "A theme that will not load is listed under <i>needs fixing</i> with "
+        "what is wrong and what to write instead, rather than quietly not "
+        "appearing.</p>"
     )
 
 
@@ -1387,7 +1435,7 @@ def _help_shortcuts() -> str:
             [
                 ("Ctrl+T", "Show or hide the folder tree"),
                 ("Ctrl+H", "Show or hide hidden files"),
-                ("Ctrl+Shift+T", "Switch between the light and dark theme"),
+                ("Ctrl+Shift+M", "Themes: choose one, or install one"),
                 ("Ctrl+P", "Set the default password"),
                 ("Ctrl+S", "Settings"),
                 ("Ctrl+D", "Add to favorites"),

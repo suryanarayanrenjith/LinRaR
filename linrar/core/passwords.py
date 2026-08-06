@@ -10,10 +10,12 @@ implying a guarantee we cannot make.
 from __future__ import annotations
 
 import base64
+import fnmatch
 import json
+import os
 import shutil
 import subprocess
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Optional
 
 
@@ -38,9 +40,6 @@ class PasswordEntry:
     note: str = ""
 
     def matches(self, filename: str) -> bool:
-        import fnmatch
-        import os
-
         base = os.path.basename(filename)
         return fnmatch.fnmatch(base.lower(), (self.mask or "*").lower())
 
@@ -51,7 +50,7 @@ def keyring_available() -> bool:
     Installing ``libsecret-tools`` does not mean anything is listening: a
     headless server, a minimal window manager, a container or a CI runner all
     routinely have the command and no daemon behind it.  ``secret-tool`` then
-    fails on stderr — "Could not connect: No such file or directory" — while
+    fails on stderr ("Could not connect: No such file or directory") while
     still exiting 1, which is also the perfectly ordinary "nothing stored yet".
 
     So the status is not enough on its own.  This used to look for the word
@@ -84,7 +83,15 @@ def keyring_available() -> bool:
 
 
 class PasswordStore:
-    """Reads and writes saved passwords, preferring the system keyring."""
+    """Reads and writes saved passwords, preferring the system keyring.
+
+    The keyring is reached by running ``secret-tool``, once per stored entry.
+    Opening any archive asks this store for the passwords whose mask fits it,
+    so a user with a dozen saved passwords was paying a dozen process launches
+    for every archive they opened, whether or not it was even encrypted.  The
+    entries are therefore read once and kept, and dropped again the moment
+    anything writes to the store.
+    """
 
     KEY = "passwords/list"
 
@@ -93,6 +100,9 @@ class PasswordStore:
         #: Set when the keyring turned out not to work after all, so the UI
         #: can say what happened rather than quietly changing its mind.
         self.failure = ""
+        #: The last result of :meth:`load`, or ``None`` when it must be read
+        #: again.  Only ever holds what this process has already been told.
+        self._cache: Optional[list[PasswordEntry]] = None
 
     @property
     def backend_name(self) -> str:
@@ -119,7 +129,14 @@ class PasswordStore:
 
     # -- public API --------------------------------------------------------
 
+    def invalidate(self) -> None:
+        """Forget what was read, so the next :meth:`load` asks again."""
+        self._cache = None
+
     def load(self) -> list[PasswordEntry]:
+        """Every saved password, read from the keyring at most once."""
+        if self._cache is not None:
+            return [replace(entry) for entry in self._cache]
         entries: list[PasswordEntry] = []
         for item in self._load_meta():
             entry = PasswordEntry(
@@ -136,17 +153,19 @@ class PasswordStore:
             if not entry.password:
                 entry.password = _deobfuscate(item.get("secret", ""))
             entries.append(entry)
-        return entries
+        self._cache = entries
+        return [replace(entry) for entry in entries]
 
     def save(self, entries: list[PasswordEntry]) -> None:
         """Store *entries*, keeping them somewhere even if the keyring refuses.
 
         A password that cannot be written to the keyring is written to
         LinRAR's own file instead, and the store stops claiming to be using a
-        keyring.  Losing what the user typed — which is what silently
-        swallowing the failure amounted to — is far worse than falling back to
+        keyring.  Losing what the user typed, which is what silently
+        swallowing the failure amounted to, is far worse than falling back to
         the weaker storage and saying so.
         """
+        self.invalidate()
         existing = {item.get("label") for item in self._load_meta()}
         kept = {entry.label for entry in entries}
         if self._use_keyring:
@@ -173,12 +192,6 @@ class PasswordStore:
                 record["secret"] = _obfuscate(entry.password)
             items.append(record)
         self._save_meta(items)
-
-    def recheck(self) -> bool:
-        """Ask again whether a keyring is usable, after the desktop changes."""
-        self._use_keyring = keyring_available()
-        self.failure = ""
-        return self._use_keyring
 
     def candidates_for(self, filename: str) -> list[str]:
         """Passwords whose mask matches *filename*, best match first."""

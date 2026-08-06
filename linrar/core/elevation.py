@@ -13,6 +13,7 @@ stamp while a session is open.
 
 from __future__ import annotations
 
+import functools
 import os
 import shutil
 import subprocess
@@ -24,6 +25,16 @@ from typing import Optional
 #: How long a session is assumed good for before the UI stops promising it.
 SESSION_SECONDS = 15 * 60
 _KEEPALIVE_SECONDS = 60
+
+
+@functools.lru_cache(maxsize=8)
+def _which(binary: str) -> Optional[str]:
+    """``shutil.which``, remembered.
+
+    Whether pkexec, sudo and doas exist does not change while LinRAR is open,
+    and the property that asks is read on nearly every line of the code below.
+    """
+    return shutil.which(binary)
 
 
 @dataclass(frozen=True)
@@ -41,7 +52,7 @@ class Method:
 
     @property
     def path(self) -> Optional[str]:
-        return shutil.which(self.binary)
+        return _which(self.binary)
 
 
 METHODS: tuple[Method, ...] = (
@@ -49,7 +60,6 @@ METHODS: tuple[Method, ...] = (
     Method("sudo", "sudo", "sudo (password)", False, True),
     Method("doas", "doas", "doas (password)", False, True),
 )
-METHOD_BY_KEY = {method.key: method for method in METHODS}
 
 
 def is_root() -> bool:
@@ -61,6 +71,19 @@ def available() -> list[Method]:
     return [method for method in METHODS if method.path]
 
 
+#: How long an answer from :func:`passwordless` is reused for.  It runs
+#: ``sudo -n true``, which is a process launch and a line in the audit log,
+#: and the UI asks the question several times over while building one dialog:
+#: ``preferred``, ``describe``, ``needs_password`` and ``command`` each want
+#: it.  A few seconds is far shorter than a sudo timestamp lives and long
+#: enough that one user action asks once.
+_PROBE_SECONDS = 5.0
+
+#: (method key -> (answered at, answer)).
+_probe_cache: dict[str, tuple[float, bool]] = {}
+_probe_lock = threading.Lock()
+
+
 def passwordless(method: Method) -> bool:
     """True when *method* can already run as root without asking."""
     if method.key not in ("sudo", "doas"):
@@ -68,13 +91,21 @@ def passwordless(method: Method) -> bool:
     binary = method.path
     if not binary:
         return False
+    now = time.monotonic()
+    with _probe_lock:
+        cached = _probe_cache.get(method.key)
+        if cached is not None and now - cached[0] < _PROBE_SECONDS:
+            return cached[1]
     try:
         proc = subprocess.run(
             [binary, "-n", "true"], capture_output=True, timeout=5
         )
+        answer = proc.returncode == 0
     except (OSError, subprocess.TimeoutExpired):
-        return False
-    return proc.returncode == 0
+        answer = False
+    with _probe_lock:
+        _probe_cache[method.key] = (time.monotonic(), answer)
+    return answer
 
 
 class Session:

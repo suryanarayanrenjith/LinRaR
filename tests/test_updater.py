@@ -3,7 +3,7 @@
 The interesting half of an updater is the half that says no, so most of this
 file feeds it manifests and archives that are wrong in one specific way and
 checks that it declines rather than installs.  The rest of it does the real
-thing end to end — a genuine release tarball, built by tools/package.sh and
+thing end to end: a genuine release tarball, built by tools/package.sh and
 served over HTTP from this machine, downloaded, verified, unpacked and
 installed over a scratch copy of LinRAR, then rolled back.
 

@@ -1,7 +1,7 @@
 """Parsing what the command line tools print, across tool versions.
 
 These need no tools installed: they feed recorded output straight to the
-parsers. That matters because tool *versions* differ between distributions —
+parsers. That matters because tool *versions* differ between distributions:
 unrar 7 labels the comment block where unrar 6 printed it bare, and a machine
 with only one of them installed cannot catch the other's shape.
 """

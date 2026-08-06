@@ -82,20 +82,21 @@ check("Options offers Customize", has(menus["Options"], win.act_customize))
 check("Options has a Layout submenu",
       any(a.text().replace("&", "") == "Layout" for a in menus["Options"].actions()))
 
-real_statuses = packages.all_statuses
-packages.all_statuses = lambda: [
-    packages.DependencyStatus(packages.DEPENDENCIES[0]),  # unrar, missing
-]
+real_missing = packages.missing_essentials
+packages.missing_essentials = lambda: [packages.DEPENDENCIES[0].name]  # unrar
 win.update_dependency_state()
 check("missing tools raise the alarm",
       win.toolbar.widgetForAction(win.act_dependencies).objectName()
       == "DependencyAlertButton")
 check("and say so in the tooltip", "Missing" in win.act_dependencies.toolTip())
-packages.all_statuses = real_statuses
+packages.missing_essentials = real_missing
 win.update_dependency_state()
-essentials_present = all(
-    s.installed for s in packages.all_statuses() if s.dependency.essential
-)
+check("the cheap check agrees with the full one",
+      packages.missing_essentials() == [
+          s.dependency.name for s in packages.all_statuses(with_versions=False)
+          if s.dependency.essential and not s.installed
+      ])
+essentials_present = not packages.missing_essentials()
 if essentials_present:
     check("back to normal when nothing is missing",
           win.toolbar.widgetForAction(win.act_dependencies).objectName()
@@ -196,8 +197,11 @@ check("packages.privileged delegates",
 
 print("== command line actions")
 from linrar import app as app_module
-check("actions declared", set(app_module._ACTIONS) ==
+check("actions declared", set(app_module.ACTION_FLAGS) ==
       {"--extract-here", "--extract-to", "--add", "--test"})
+check("and each has the short form the help text promises",
+      set(app_module.ACTION_FLAGS.values()) == {"-x", "-X", "-a", "-t"},
+      app_module.ACTION_FLAGS)
 check("extract_paths exists", callable(win.extract_paths))
 check("test_paths exists", callable(win.test_paths))
 

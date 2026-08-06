@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """The release tool: bump the version, cut the notes, describe the result.
 
-Everything about a LinRAR release is derived from two files — ``__version__``
+Everything about a LinRAR release is derived from two files: ``__version__``
 in ``linrar/version.py`` and the ``## Unreleased`` section of ``CHANGELOG.md``.
 This script is the only thing that edits them, so a release cannot half-happen:
 the number and the notes always move together.
@@ -38,7 +38,7 @@ from typing import List, Optional, Tuple
 
 # Before linrar is imported, and it matters.  This script rewrites the very
 # module it imports, and CPython decides a cached .pyc is still good from the
-# source's *seconds* mtime and its size — both of which survive replacing
+# source's *seconds* mtime and its size: both of which survive replacing
 # "2.0.0" with "2.1.0" in the same second.  Leaving no cache behind, and
 # dropping the one the file already had (see write()), is what stops a bump
 # from being invisible to the next process that imports it.
@@ -58,7 +58,7 @@ CHANGELOG_FILE = os.path.join(ROOT, "CHANGELOG.md")
 #: matches it: at the start of a line, double quoted, nothing else on it.
 _ASSIGNMENT = re.compile(r'^__version__ = "(?P<version>[^"]*)"$', re.MULTILINE)
 
-#: A CHANGELOG entry: "## Unreleased", "## 2.0.0", "## 2.1.0 — 2026-08-02".
+#: A CHANGELOG entry: "## Unreleased", "## 2.0.0", "## 2.1.0 - 2026-08-02".
 _HEADING = re.compile(r"^## +(?P<title>\S.*?)[ \t]*$", re.MULTILINE)
 
 #: What a pre-release may be called.  Deliberately narrower than the
@@ -313,7 +313,7 @@ def apply_changelog(target: Version, date: str, *, allow_empty: bool) -> str:
     heading_end = text.index("\n", section.start)
     return (
         text[:section.start]
-        + f"## Unreleased\n\n## {target} — {date}"
+        + f"## Unreleased\n\n## {target} - {date}"
         + text[heading_end:]
     )
 
@@ -347,7 +347,7 @@ def build_manifest(
     """The document an updater reads: what the newest release is, and where.
 
     Deliberately flat and self-contained.  A checker only has to fetch this one
-    file to answer "is there something newer, and what do I download" — which
+    file to answer "is there something newer, and what do I download", which
     is why the download URLs and the checksums are in it rather than left to be
     discovered through the API.
     """
@@ -422,7 +422,7 @@ def command_bump(options: argparse.Namespace) -> int:
     write(VERSION_FILE, version_text)
     print(f"{current} -> {target}")
     print(f"  {_relative(VERSION_FILE)}")
-    print(f"  {_relative(CHANGELOG_FILE)}  ## {target} — {date}")
+    print(f"  {_relative(CHANGELOG_FILE)}  ## {target} - {date}")
     return 0
 
 

@@ -83,7 +83,7 @@ class ProblemDialog(QDialog):
             layout.addWidget(_rule())
             layout.addWidget(QLabel("<b>What you can do</b>"))
             for line in problem.suggestions:
-                bullet = QLabel(f"•   {line}")
+                bullet = QLabel(f"-   {line}")
                 # Plain text: a suggestion may legitimately contain a "<" or a
                 # "&" (a shell command, a file name) and must not be read as
                 # markup, nor show its escapes.
@@ -182,7 +182,6 @@ class ProblemDialog(QDialog):
         buttons.rejected.connect(self.reject)
         buttons.accepted.connect(self.reject)
         row.addWidget(buttons)
-        self._close_box = buttons
         box.addLayout(row)
         return box
 

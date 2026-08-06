@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
+import os
 import threading
 from dataclasses import dataclass, field
 from typing import Callable, Optional
 
 from ..models import (
-    ArchiveEntry,
     ArchiveFormat,
     ArchiveInfo,
     CompressOptions,
@@ -15,6 +15,17 @@ from ..models import (
     OperationError,
 )
 from ..process import ProcessRunner
+
+
+#: The most members a listing may have before LinRAR refuses to build one.
+#:
+#: A directory of a few hundred thousand entries is already beyond what the
+#: file list can show usefully, and an archive claiming tens of millions is
+#: not a large archive: it is a small file that expands into one, and reading
+#: it would fill memory with :class:`ArchiveEntry` objects long before the
+#: window ever appeared.  Refusing with a sentence beats being killed by the
+#: kernel with none.
+MAX_ENTRIES = 500_000
 
 
 def _noop(*_args, **_kwargs) -> None:
@@ -28,7 +39,7 @@ class TaskContext:
     It also keeps the arithmetic behind WinRAR's two progress bars, so every
     backend gets the same answer from the same code.  The top bar is the file
     being worked on; the bottom bar is the whole operation, weighted by
-    **bytes** rather than by file count — thirty small files followed by one
+    **bytes** rather than by file count: thirty small files followed by one
     large one is not "97% done" after the small ones, and a bar that says so
     is worse than no bar.
 
@@ -335,45 +346,16 @@ class ArchiveBackend:
         )
 
     @staticmethod
-    def build_tree(entries: list[ArchiveEntry]) -> dict[str, list[ArchiveEntry]]:
-        """Group entries by parent folder, synthesising missing directories.
+    def check_entry_count(count: int, path: str) -> None:
+        """Refuse a listing too large to hold, before it is held.
 
-        Some archives only store file records, so a folder that exists solely as
-        a path component of a file would otherwise be invisible to the browser.
+        See :data:`MAX_ENTRIES`.  Called with the count the archive declares,
+        so nothing is allocated for a listing that will be turned away.
         """
-        tree: dict[str, list[ArchiveEntry]] = {"": []}
-        known_dirs: set[str] = set()
-
-        for entry in entries:
-            if entry.is_dir:
-                known_dirs.add(entry.name.rstrip("/"))
-
-        # Materialise every intermediate folder referenced by a path.
-        implied: set[str] = set()
-        for entry in entries:
-            parts = entry.name.rstrip("/").split("/")
-            stop = len(parts) if entry.is_dir else len(parts) - 1
-            for i in range(1, stop + 1):
-                implied.add("/".join(parts[:i]))
-
-        for folder in implied:
-            tree.setdefault(folder, [])
-
-        placed: set[str] = set()
-        for entry in entries:
-            key = entry.name.rstrip("/")
-            if entry.is_dir:
-                placed.add(key)
-            tree.setdefault(entry.parent, [])
-            tree[entry.parent].append(entry)
-
-        # Add synthetic entries for folders the archive never recorded.
-        for folder in sorted(implied):
-            if folder in placed:
-                continue
-            parent = folder.rsplit("/", 1)[0] if "/" in folder else ""
-            tree.setdefault(parent, [])
-            tree[parent].append(ArchiveEntry(name=folder, is_dir=True))
-            placed.add(folder)
-
-        return tree
+        if count > MAX_ENTRIES:
+            raise OperationError(
+                f"{os.path.basename(path)} says it holds {count:,} files, "
+                f"which is more than LinRAR will list ({MAX_ENTRIES:,}).\n\n"
+                "Unpack it from a terminal if it really is that large:\n"
+                f"    unrar x {os.path.basename(path)}"
+            )

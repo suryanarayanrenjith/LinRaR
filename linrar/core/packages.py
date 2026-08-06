@@ -253,7 +253,7 @@ class Dependency:
     def available_here(self) -> bool:
         """Can this tool exist on this machine at all?
 
-        Not "is it installed" — whether anybody publishes it for the
+        Not "is it installed", but whether anybody publishes it for the
         architecture.  Offering to install something that has never been built
         for the machine is worse than saying so.
         """
@@ -554,7 +554,7 @@ def _probe_version(path: str, dependency: Dependency) -> str:
     return ""
 
 
-def dependency_status(dependency: Dependency) -> DependencyStatus:
+def locate_dependency(dependency: Dependency) -> str:
     """Where this tool is, asked exactly the way the backends ask it.
 
     Using ``shutil.which`` here instead would let the manager report "Missing"
@@ -564,18 +564,52 @@ def dependency_status(dependency: Dependency) -> DependencyStatus:
     from . import tools
 
     path = tools.find(dependency.key) if dependency.key in tools.CANDIDATES else ""
-    if not path:
-        for binary in dependency.binaries:
-            path = shutil.which(binary) or ""
-            if path:
-                break
     if path:
-        return DependencyStatus(dependency, path, _probe_version(path, dependency))
-    return DependencyStatus(dependency)
+        return path
+    for binary in dependency.binaries:
+        found = shutil.which(binary)
+        if found:
+            return found
+    return ""
 
 
-def all_statuses() -> list[DependencyStatus]:
-    return [dependency_status(dep) for dep in DEPENDENCIES]
+def dependency_status(
+    dependency: Dependency, with_version: bool = True
+) -> DependencyStatus:
+    """Where this tool is, and what version it says it is.
+
+    *with_version* runs the tool to ask.  That costs up to three process
+    launches per dependency, so a caller that only wants to know whether
+    something is installed says no and gets the answer for the price of a
+    ``stat``.
+    """
+    path = locate_dependency(dependency)
+    if not path:
+        return DependencyStatus(dependency)
+    version = _probe_version(path, dependency) if with_version else ""
+    return DependencyStatus(dependency, path, version)
+
+
+def all_statuses(with_versions: bool = True) -> list[DependencyStatus]:
+    """Every dependency LinRAR knows about, and where it is.
+
+    The Dependencies window wants the versions; the toolbar, which only needs
+    to know whether to put a warning on its button, does not, and used to pay
+    for eighteen process launches on every rebuild to find that out.
+    """
+    return [dependency_status(dep, with_versions) for dep in DEPENDENCIES]
+
+
+def missing_essentials() -> list[str]:
+    """The names of the required tools that are not installed.
+
+    What the toolbar's warning badge is built from, and deliberately cheap:
+    nothing here runs a program.
+    """
+    return [
+        dep.name for dep in DEPENDENCIES
+        if dep.essential and not locate_dependency(dep)
+    ]
 
 
 # ---------------------------------------------------------------- privilege

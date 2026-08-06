@@ -128,7 +128,7 @@ TOOLBAR_CATALOGUE: list[tuple[str, str, str]] = [
     ("customize", "act_customize", "Customize"),
     ("help", "act_help_topics", "Help"),
     ("update", "act_check_updates", "Update"),
-    ("theme", "act_toggle_theme", "Theme"),
+    ("themes", "act_themes", "Themes"),
 ]
 
 TOOLBAR_STYLES: dict[str, Qt.ToolButtonStyle] = {
@@ -351,25 +351,15 @@ class MainWindow(QMainWindow):
         self.act_show_hidden.setChecked(SETTINGS.get("view/show_hidden"))
 
         # -- appearance --
-        self.theme_actions: dict[str, QAction] = {}
-        theme_group = QActionGroup(self)
-        theme_group.setExclusive(True)
-        for name, label in (
-            (theme.LIGHT, "&Light theme"),
-            (theme.DARK, "&Dark theme"),
-        ):
-            action = self._act(
-                label, f"theme-{name}", "",
-                lambda _checked=False, m=name: self.set_theme(m),
-                f"Use the {theme.MODE_LABELS[name].lower()} colour scheme",
-                checkable=True,
-            )
-            action.setChecked(name == theme.mode())
-            theme_group.addAction(action)
-            self.theme_actions[name] = action
-        self.act_toggle_theme = self._act(
-            "Switch theme", "theme-dark", "Ctrl+Shift+T", self.toggle_theme,
-            "Switch between the light and dark theme",
+        #
+        # One command, one button.  There used to be a light/dark switch beside
+        # this and a submenu listing every theme, which meant three ways to
+        # change one setting and two of them showing only two of the twelve
+        # themes.  The manager is the one place a theme is chosen, and it
+        # previews what it is about to do -- which a switch never could.
+        self.act_themes = self._act(
+            "&Themes...", "themes", "Ctrl+Shift+M", self.cmd_themes,
+            "Choose a theme, or install one you downloaded",
         )
 
         self.act_settings = self._act("&Settings...", "", "Ctrl+S", self.cmd_settings)
@@ -644,12 +634,7 @@ class MainWindow(QMainWindow):
         layout_menu.addAction(self.act_toolbar_text)
         layout_menu.addAction(self.act_reset_layout)
 
-        theme_menu = options.addMenu(
-            icons.icon(f"theme-{theme.mode()}"), "&Theme"
-        )
-        self.theme_menu = theme_menu
-        for action in self.theme_actions.values():
-            theme_menu.addAction(action)
+        options.addAction(self.act_themes)
 
         help_menu = bar.addMenu("&Help")
         help_menu.addAction(self.act_help_topics)
@@ -658,17 +643,17 @@ class MainWindow(QMainWindow):
         help_menu.addAction(self.act_check_updates)
         help_menu.addAction(self.act_about)
 
-        # The theme switch lives in the menu bar's corner: always in the same
-        # place, whatever the user does to the toolbar.
-        self.theme_button = QToolButton()
-        self.theme_button.setObjectName("CornerButton")
-        self.theme_button.setDefaultAction(self.act_toggle_theme)
-        self.theme_button.setIconSize(QSize(18, 18))
-        self.theme_button.setAutoRaise(True)
-        self.theme_button.setToolButtonStyle(
+        # The one appearance control, in the menu bar's corner: always in the
+        # same place, whatever the user does to the toolbar.
+        self.themes_button = QToolButton()
+        self.themes_button.setObjectName("CornerButton")
+        self.themes_button.setDefaultAction(self.act_themes)
+        self.themes_button.setIconSize(QSize(18, 18))
+        self.themes_button.setAutoRaise(True)
+        self.themes_button.setToolButtonStyle(
             Qt.ToolButtonStyle.ToolButtonIconOnly
         )
-        bar.setCornerWidget(self.theme_button, Qt.Corner.TopRightCorner)
+        bar.setCornerWidget(self.themes_button, Qt.Corner.TopRightCorner)
 
     def _build_sort_menu(self) -> None:
         from .filelist import HEADERS
@@ -792,17 +777,17 @@ class MainWindow(QMainWindow):
                     # Called out on the bar: it is how missing tools get fixed.
                     button.setObjectName("DependencyButton")
 
-        self.act_toggle_theme.setIconText("Theme")
-        self._sync_theme_widgets()
         self.update_dependency_state()
 
     def update_dependency_state(self) -> None:
-        """Flag the Dependencies button when a required tool is missing."""
-        missing = [
-            status.dependency.name
-            for status in packages.all_statuses()
-            if not status.installed and status.dependency.essential
-        ]
+        """Flag the Dependencies button when a required tool is missing.
+
+        Asks only where the tools are, never what version they are: running
+        each of them to find out is what the Dependencies window is for, and
+        doing it here cost a burst of process launches every time the toolbar
+        was rebuilt.
+        """
+        missing = packages.missing_essentials()
         icon_name = "package-alert" if missing else "package"
         self.act_dependencies.setIcon(icons.icon(icon_name))
         self.act_dependencies.setProperty("iconName", icon_name)
@@ -987,28 +972,42 @@ class MainWindow(QMainWindow):
         return True
 
     def go_back(self) -> None:
-        """Return to the previous folder, the way a file manager does."""
-        if not self._back:
-            return
-        target = self._back.pop()
-        here = self.archive_path or self.current_folder
-        self._remember_cursor()
-        if self.navigate_to(target, record=False):
-            self._forward.append(here)
-            del self._forward[:-_HISTORY_DEPTH]
-        self._update_actions()
+        """Return to the previous place, the way a file manager does."""
+        self._step(self._back, self._forward)
 
     def go_forward(self) -> None:
-        if not self._forward:
+        """Go forward again after stepping back."""
+        self._step(self._forward, self._back)
+
+    def _step(self, from_stack: list[str], to_stack: list[str]) -> None:
+        """Move one place along the history, pushing where we were onto the other.
+
+        Back and Forward are the same operation with the stacks swapped, and
+        writing them separately is how they came to disagree: only one of them
+        knew that an entry can be an *archive* as well as a folder, so
+        stepping out of an archive and back again landed in the folder the
+        archive lives in rather than inside it.
+        """
+        if not from_stack:
             return
-        target = self._forward.pop()
-        here = self.current_folder
+        target = from_stack.pop()
+        here = self.archive_path or self.current_folder
         self._remember_cursor()
+
         if os.path.isdir(target):
-            if self.navigate_to(target, record=False):
-                self._back.append(here)
+            moved = self.navigate_to(target, record=False)
         elif os.path.isfile(target):
-            self.open_archive(target)
+            moved = self.open_archive(target, record=False)
+        else:
+            # It has been deleted or unmounted since; say so and stay put
+            # rather than walking the user into an error dialog.
+            self.statusBar().showMessage(f"{target} is no longer there", 5000)
+            self._update_actions()
+            return
+
+        if moved:
+            to_stack.append(here)
+            del to_stack[:-_HISTORY_DEPTH]
         self._update_actions()
 
     def _remember_cursor(self) -> None:
@@ -1048,7 +1047,7 @@ class MainWindow(QMainWindow):
     ) -> Optional[tuple]:
         """Read an archive's listing without disturbing the window.
 
-        Returns ``(backend, info, password, path)`` — *path* may differ from
+        Returns ``(backend, info, password, path)``; *path* may differ from
         the one asked for, because a later volume of a split set is answered
         with the volume that carries the index.  ``None`` means it could not
         be read, and the reason has already been put on screen.
@@ -1074,8 +1073,9 @@ class MainWindow(QMainWindow):
         if facts.volume > 1 and facts.first_volume:
             if announce:
                 self.statusBar().showMessage(
-                    f"{os.path.basename(path)} is part {facts.volume} of a set "
-                    f"— using {os.path.basename(facts.first_volume)} instead",
+                    f"{os.path.basename(path)} is part {facts.volume} of a "
+                    f"set, so {os.path.basename(facts.first_volume)} is being "
+                    "opened instead",
                     8000,
                 )
             path = facts.first_volume
@@ -1123,7 +1123,7 @@ class MainWindow(QMainWindow):
             return None
 
         # The backend's own idea of the format usually wins, but 7-Zip calls a
-        # .deb an "Ar" archive — true, and less useful than what the signature
+        # .deb an "Ar" archive: true, and less useful than what the signature
         # already proved.
         if info.format is ArchiveFormat.UNKNOWN or (
             info.format is ArchiveFormat.AR and fmt is ArchiveFormat.DEB
@@ -1131,7 +1131,9 @@ class MainWindow(QMainWindow):
             info.format = fmt
         return backend, info, attempt_password, path
 
-    def open_archive(self, path: str, password: Optional[str] = None) -> bool:
+    def open_archive(
+        self, path: str, password: Optional[str] = None, record: bool = True
+    ) -> bool:
         """Enter an archive, explaining clearly whenever that is not possible.
 
         Every way this can fail (a file that vanished, one that is not an
@@ -1139,6 +1141,9 @@ class MainWindow(QMainWindow):
         not installed, a damaged download) is diagnosed and reported with
         what LinRAR actually found, rather than passed through as the archive
         tool's own "cannot open".
+
+        *record* is what Back and Forward turn off, exactly as in
+        :meth:`navigate_to`: walking the history must not rewrite it.
         """
         path = os.path.abspath(os.path.expanduser(path))
         # Handed a folder (from the command line, a favourite, or the address
@@ -1152,7 +1157,7 @@ class MainWindow(QMainWindow):
         _backend, info, attempt_password, path = result
 
         # Stepping into an archive is a navigation too: Back leaves it again.
-        if not self.in_archive and self.current_folder:
+        if record and not self.in_archive and self.current_folder:
             self._remember_cursor()
             self._back.append(self.current_folder)
             del self._back[:-_HISTORY_DEPTH]
@@ -1417,7 +1422,7 @@ class MainWindow(QMainWindow):
             # One file: name what it is, which is more use than counting to one.
             item = selected[0]
             self.selection_label.setText(
-                f"{item.type_name}  ·  {format_size(item.size)} bytes"
+                f"{item.type_name}, {format_size(item.size)} bytes"
             )
         elif selected:
             files = [i for i in selected if not i.is_dir]
@@ -1695,7 +1700,7 @@ class MainWindow(QMainWindow):
         """Unpack the rows being dragged, and hand back where they landed.
 
         Qt asks for this at the *start* of the drag, before the pointer moves,
-        so the work is done here and not on the drop — there is no drop to
+        so the work is done here and not on the drop; there is no drop to
         hook: the file manager on the other end does that part.
         """
         members = self._expand_selection(items)
@@ -1705,7 +1710,7 @@ class MainWindow(QMainWindow):
         total = self._selection_bytes(members)
         if total > self.DRAG_LIMIT:
             self.statusBar().showMessage(
-                f"{format_size(total)} bytes is too much to drag out — "
+                f"{format_size(total)} bytes is too much to drag out: "
                 "use Extract instead",
                 8000,
             )
@@ -1770,7 +1775,7 @@ class MainWindow(QMainWindow):
         is how many members it has started.
 
         Returns ``(ok, result, error)``.  ``ok`` is ``None`` when the user sent
-        the operation to the background — the task then finishes on its own and
+        the operation to the background: the task then finishes on its own and
         reports through the status bar, so callers should simply return.
         """
         task = Task(work, title, self)
@@ -1812,7 +1817,7 @@ class MainWindow(QMainWindow):
         task.passwordNeeded.connect(
             lambda err, t=task, s=title: self._background_finished(t, s, err)
         )
-        self.statusBar().showMessage(f"{title} — continuing in the background")
+        self.statusBar().showMessage(f"{title}: continuing in the background")
 
     def _background_finished(
         self, task: Task, title: str, error: Optional[OperationError]
@@ -1820,10 +1825,10 @@ class MainWindow(QMainWindow):
         if task in self._background_tasks:
             self._background_tasks.remove(task)
         if error is None:
-            self.statusBar().showMessage(f"{title} — finished", 8000)
+            self.statusBar().showMessage(f"{title}: finished", 8000)
             self.refresh()
         elif "cancelled" in getattr(error, "message", "").lower():
-            self.statusBar().showMessage(f"{title} — cancelled", 6000)
+            self.statusBar().showMessage(f"{title}: cancelled", 6000)
         else:
             QMessageBox.critical(
                 self, "LinRAR", f"{title} failed.\n\n{error.message}"
@@ -2079,7 +2084,7 @@ class MainWindow(QMainWindow):
         """Compress, then wrap the result into a self-extracting AppImage.
 
         An AppImage carries a whole RAR archive inside it, so the archive is
-        built first — into a scratch folder, because the user asked for one
+        built first: into a scratch folder, because the user asked for one
         file and should not be left tidying up an intermediate one.
         """
         target = options.archive_path
@@ -2147,7 +2152,7 @@ class MainWindow(QMainWindow):
             self,
             "LinRAR",
             "Without the runtime an AppImage cannot be built.\n\n"
-            "Choose the RAR .sfx stub instead — it needs no extra files.",
+            "Choose the RAR .sfx stub instead; it needs no extra files.",
         )
         return False
 
@@ -2197,8 +2202,8 @@ class MainWindow(QMainWindow):
         """Unpack each archive in *paths*, one after the other.
 
         The window is left exactly as it was.  WinRAR's *Extract here* never
-        navigates anywhere — it puts a progress box on screen and gets on with
-        it — and opening each archive in the browser first was both slower and
+        navigates anywhere, it puts a progress box on screen and gets on with
+        it, and opening each archive in the browser first was both slower and
         a surprise, since it left the user somewhere they did not ask to be.
         """
         done = 0
@@ -2470,19 +2475,23 @@ class MainWindow(QMainWindow):
 
         Selecting a folder must pull in everything beneath it, and selecting
         nothing means "the whole archive".
+
+        One pass over the archive whatever the selection is.  Testing every
+        entry against every selected folder, which is what this used to do,
+        meant selecting a hundred folders in an archive of a hundred thousand
+        members did ten million string comparisons before the progress window
+        could even open.
         """
         if not selected or self.archive_info is None:
             return []
-        members: set[str] = set()
-        for item in selected:
-            if item.is_dir:
-                prefix = item.path.rstrip("/") + "/"
-                members.add(item.path)
-                for entry in self.archive_info.entries:
-                    if entry.name.startswith(prefix):
-                        members.add(entry.name)
-            else:
-                members.add(item.path)
+        members: set[str] = {item.path for item in selected}
+        prefixes = tuple(
+            item.path.rstrip("/") + "/" for item in selected if item.is_dir
+        )
+        if prefixes:
+            for entry in self.archive_info.entries:
+                if entry.name.startswith(prefixes):
+                    members.add(entry.name)
         return sorted(members)
 
     def cmd_test(self) -> None:
@@ -2733,7 +2742,7 @@ class MainWindow(QMainWindow):
             self._populate_filesystem()
         count = len([i for i in self.model.items if not i.is_parent])
         self.statusBar().showMessage(
-            f"{count} item(s) match '{mask}' — press F5 to clear the filter", 8000
+            f"{count} item(s) match '{mask}': press F5 to clear the filter", 8000
         )
 
     def _find_text(self, query) -> None:
@@ -2916,8 +2925,8 @@ class MainWindow(QMainWindow):
     def cmd_sfx(self) -> None:
         """Turn an existing archive into a self-extracting one.
 
-        Both shapes live behind this one command — an AppImage or rar's own
-        ``.sfx`` stub — because "which of the two do I want?" is a question the
+        Both shapes live behind this one command, an AppImage or rar's own
+        ``.sfx`` stub, because "which of the two do I want?" is a question the
         dialog can answer far better than a menu of two similar entries.
         """
         source = self.archive_path
@@ -2984,7 +2993,7 @@ class MainWindow(QMainWindow):
             self._populate_filesystem(os.path.basename(str(result)))
 
     def _convert_to_stub(self, source: str) -> None:
-        """rar's own Linux .sfx stub — it converts the archive in place."""
+        """rar's own Linux .sfx stub: it converts the archive in place."""
         backend = REGISTRY.rar
 
         def work(ctx: TaskContext):
@@ -3084,12 +3093,9 @@ class MainWindow(QMainWindow):
         except OperationError as exc:
             QMessageBox.warning(self, "LinRAR", exc.message)
             return
-        if fmt not in (
-            ArchiveFormat.RAR5,
-            ArchiveFormat.RAR4,
-            ArchiveFormat.ZIP,
-            ArchiveFormat.SEVENZIP,
-        ):
+        # Which formats can be written is ArchiveFormat's to say; listing them
+        # again here was a second copy of that answer, free to drift.
+        if fmt.read_only:
             QMessageBox.information(
                 self,
                 "LinRAR",
@@ -3200,7 +3206,7 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(
                 self,
                 "LinRAR",
-                "A folder name cannot contain “/”.\n\nTo create nested folders, "
+                "A folder name cannot contain '/'.\n\nTo create nested folders, "
                 "make them one at a time.",
             )
             return
@@ -3564,11 +3570,15 @@ class MainWindow(QMainWindow):
             workdir = self._stage_members(members, "linrar-checksum-")
             if workdir is None:
                 return
+            # One walk of the scratch folder answers where every member
+            # landed; walking it once per member turned a hundred files into
+            # a hundred walks of a hundred files.
+            staged_index = _index_by_name(workdir)
             files = []
             for item in selected:
                 staged = os.path.join(workdir, item.path)
                 if not os.path.isfile(staged):
-                    staged = _find_under(workdir, item.name) or staged
+                    staged = staged_index.get(item.name) or staged
                 files.append((item.path, staged))
         else:
             files = [(item.name, item.path) for item in selected]
@@ -3603,7 +3613,7 @@ class MainWindow(QMainWindow):
         """Grey out every menu entry whose setting is not the user's to change.
 
         Without this the menu would still toggle, the view would still change,
-        and nothing would be remembered — which reads as a bug rather than as
+        and nothing would be remembered, which reads as a bug rather than as
         a decision somebody made on purpose.
         """
         self.locked_settings = policy.guard_actions({
@@ -3616,13 +3626,12 @@ class MainWindow(QMainWindow):
             "view/show_status": self.act_show_status,
             "view/grid_lines": self.act_grid_lines,
             "view/alternate_rows": self.act_alternate_rows,
-            # The corner switch and its toolbar button are the same action.
-            "view/theme": self.act_toggle_theme,
+            # The corner button and the toolbar button are the same action.
+            "view/theme": self.act_themes,
         })
         # A group of mutually exclusive entries stands for one setting, so it
         # is all of them or none.
         for key, group in (
-            ("view/theme", self.theme_actions),
             ("view/mode", self.view_mode_actions),
             ("view/tree_side", self.tree_side_actions),
             ("view/comment_side", self.comment_side_actions),
@@ -3632,9 +3641,9 @@ class MainWindow(QMainWindow):
             policy.guard_actions([(key, action) for action in group.values()])
             if key not in self.locked_settings:
                 self.locked_settings.append(key)
-        # A submenu whose every entry is greyed out should not invite a click.
-        if SETTINGS.is_locked("view/theme"):
-            policy.guard_actions([("view/theme", self.theme_menu.menuAction())])
+        if SETTINGS.is_locked("view/theme") and (
+                "view/theme" not in self.locked_settings):
+            self.locked_settings.append("view/theme")
 
     def set_view_mode(self, mode: str) -> None:
         """Switch the file pane between Details, List, icons and tiles."""
@@ -3781,8 +3790,8 @@ class MainWindow(QMainWindow):
     def cmd_settings(self) -> None:
         if SettingsDialog(self).exec() != SettingsDialog.DialogCode.Accepted:
             return
-        chosen = theme.normalize(SETTINGS.get("view/theme"))
-        if chosen != theme.mode():
+        chosen = theme.resolve(SETTINGS.get("view/theme"))
+        if chosen != theme.active():
             self.set_theme(chosen)
         self.act_show_hidden.setChecked(SETTINGS.get("view/show_hidden"))
         self._apply_customization()
@@ -3814,7 +3823,7 @@ class MainWindow(QMainWindow):
             # so where it stays said, rather than only in a dialog that has
             # just been closed.
             self.statusBar().showMessage(
-                f"LinRAR {versions.installed_version()} is installed — "
+                f"LinRAR {versions.installed_version()} is installed: "
                 f"restart to use it (running {versions.__version__})", 0
             )
 
@@ -3908,15 +3917,20 @@ class MainWindow(QMainWindow):
 
     # -- appearance --------------------------------------------------------
 
-    def set_theme(self, mode: str) -> None:
-        """Repaint the whole application in the light or the dark theme."""
-        mode = theme.normalize(mode)
-        SETTINGS.set("view/theme", mode)
+    def set_theme(self, name: str) -> None:
+        """Repaint the whole application in *name*.
+
+        A built-in mode or an installed theme pack's id; anything else falls
+        back to the light theme, which is also what happens when the pack the
+        settings file names has since been uninstalled.
+        """
+        name = theme.resolve(name)
+        SETTINGS.set("view/theme", name)
         SETTINGS.sync()
 
         app = QApplication.instance()
         if app is not None:
-            theme.apply(app, mode)
+            theme.apply(app, name)
 
         self._refresh_icons()
         self._sync_theme_widgets()
@@ -3929,32 +3943,24 @@ class MainWindow(QMainWindow):
             self._populate_filesystem()
         self._update_path_combo(self.archive_path or self.current_folder)
         self._rebuild_favorites()
-        self.statusBar().showMessage(
-            f"{theme.MODE_LABELS[mode]} theme applied", 2500
-        )
+        self.statusBar().showMessage(f"{theme.label(name)} theme applied", 2500)
 
-    def toggle_theme(self) -> None:
-        self.set_theme(
-            theme.DARK if theme.mode() == theme.LIGHT else theme.LIGHT
-        )
+    def cmd_themes(self) -> None:
+        """Options > Themes: the chooser, with a live preview."""
+        from .dialogs.themes import ThemeManagerDialog
+
+        ThemeManagerDialog(self).exec()
+        self._sync_theme_widgets()
 
     def _sync_theme_widgets(self) -> None:
-        """Keep the theme menu and the toolbar switch showing the right state."""
-        mode = theme.mode()
-        for name, action in self.theme_actions.items():
-            action.setChecked(name == mode)
-
-        other = theme.DARK if mode == theme.LIGHT else theme.LIGHT
-        label = theme.MODE_LABELS[other].lower()
-        self.act_toggle_theme.setIcon(icons.icon(f"theme-{other}"))
-        self.act_toggle_theme.setProperty("iconName", f"theme-{other}")
-        self.act_toggle_theme.setText(f"Switch to the {label} theme")
-        self.act_toggle_theme.setIconText("Theme")
-        self.act_toggle_theme.setToolTip(f"Switch to the {label} theme")
-        self.act_toggle_theme.setStatusTip(f"Switch to the {label} theme")
-        menu = getattr(self, "theme_menu", None)
-        if menu is not None:
-            menu.setIcon(icons.icon(f"theme-{mode}"))
+        """Say which theme the Themes button would open on."""
+        self.act_themes.setToolTip(
+            f"Themes: {theme.label(theme.active())} is in use.\n"
+            "Choose another, or install one you downloaded."
+        )
+        self.act_themes.setStatusTip(
+            f"Choose a theme; {theme.label(theme.active())} is in use"
+        )
 
     def _refresh_icons(self) -> None:
         """Re-issue every icon from the build that matches the new theme."""
@@ -4112,22 +4118,28 @@ def _member_plan(info: ArchiveInfo, members: list[str]) -> dict[str, int]:
 
 
 def _shorten_path(path: str, limit: int = 58) -> str:
-    """A path that fits in a menu: home as ``~``, the middle as ``…``."""
+    """A path that fits in a menu: home as ``~``, the middle as ``...``."""
     home = os.path.expanduser("~")
     shown = "~" + path[len(home):] if path.startswith(home + os.sep) else path
     if len(shown) <= limit:
         return shown
     name = os.path.basename(shown)
     room = limit - len(name) - 4
-    return (shown[:room] + "…/" + name) if room > 4 else "…/" + name
+    return (shown[:room] + ".../" + name) if room > 4 else ".../" + name
 
 
-def _find_under(folder: str, name: str) -> str:
-    """Where a file called *name* ended up beneath *folder*, or ""."""
+def _index_by_name(folder: str) -> dict[str, str]:
+    """base name -> where it is, from one walk of *folder*.
+
+    Extraction may or may not keep a member's folders, so finding the file it
+    produced means looking for the name.  Doing that per member walked the
+    whole tree per member; this walks it once.
+    """
+    index: dict[str, str] = {}
     for root, _dirs, names in os.walk(folder):
-        if name in names:
-            return os.path.join(root, name)
-    return ""
+        for name in names:
+            index.setdefault(name, os.path.join(root, name))
+    return index
 
 
 def _unique_path(target: str) -> str:

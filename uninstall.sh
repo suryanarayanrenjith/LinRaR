@@ -405,19 +405,27 @@ if [ -f "$GLOBAL_CONFIG_FILE" ]; then
     as_root rmdir "$GLOBAL_CONFIG_DIR" 2>/dev/null || true
 fi
 
+THEME_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/LinRAR/themes"
 if [ "$PURGE_SETTINGS" = "1" ]; then
     step "Removing saved settings and cache"
+    # Themes the user installed go with the settings and not before: they are
+    # files somebody chose to put there, so they are only removed when the whole
+    # point of the run is to leave nothing behind.
     for path in \
         "${XDG_CONFIG_HOME:-$HOME/.config}/LinRAR" \
         "${XDG_CONFIG_HOME:-$HOME/.config}/LinRAR-Linux" \
         "${XDG_CACHE_HOME:-$HOME/.cache}/LinRAR-Linux" \
-        "${XDG_CACHE_HOME:-$HOME/.cache}/LinRAR"
+        "${XDG_CACHE_HOME:-$HOME/.cache}/LinRAR" \
+        "$THEME_DIR"
     do
         if [ -d "$path" ]; then rm -rf "$path"; info "removed ${path}"; fi
     done
+    rmdir "${XDG_DATA_HOME:-$HOME/.local/share}/LinRAR" 2>/dev/null || true
     ok "settings and cache removed"
 else
     info "settings kept in ~/.config/LinRAR (use --purge-settings to remove)"
+    [ -d "$THEME_DIR" ] &&
+        info "installed themes kept in ${THEME_DIR}"
 fi
 
 if [ "$PURGE_TOOLS" = "1" ]; then

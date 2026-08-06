@@ -9,7 +9,7 @@ the main window talks to.
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Optional
 
@@ -103,7 +103,14 @@ _ARCHIVE_TYPES = {
 
 @dataclass
 class ListingItem:
-    """One row: a disk entry, an archive member, or the ``..`` parent link."""
+    """One row: a disk entry, an archive member, or the ``..`` parent link.
+
+    ``type_name`` and ``icon_name`` are worked out once per row and kept.  Qt
+    asks the model for a cell's data every time it paints it, several roles at
+    a time, and sorting by Type asks again for every comparison; recomputing
+    an answer that cannot change was costing a folder of ten thousand files
+    tens of thousands of table lookups per scroll.
+    """
 
     name: str
     path: str
@@ -116,6 +123,9 @@ class ListingItem:
     encrypted: bool = False
     is_link: bool = False
     entry: Optional[ArchiveEntry] = None
+    #: Filled in on first use; never part of what a caller constructs.
+    _type_name: Optional[str] = field(default=None, repr=False, compare=False)
+    _icon_name: Optional[str] = field(default=None, repr=False, compare=False)
 
     @property
     def _identity(self) -> filetypes.FileType:
@@ -131,6 +141,11 @@ class ListingItem:
 
     @property
     def type_name(self) -> str:
+        if self._type_name is None:
+            self._type_name = self._compute_type_name()
+        return self._type_name
+
+    def _compute_type_name(self) -> str:
         if self.is_parent:
             return ""
         if self.is_dir:
@@ -142,14 +157,19 @@ class ListingItem:
 
     @property
     def icon_name(self) -> str:
+        if self._icon_name is None:
+            self._icon_name = self._compute_icon_name()
+        return self._icon_name
+
+    def _compute_icon_name(self) -> str:
         if self.is_parent:
             return "folder-up"
         if self.is_dir:
             return "folder"
         # The type table is asked first, and the archive test is the fallback
-        # rather than the other way round.  Several extensions are both -- an
+        # rather than the other way round.  Several extensions are both: an
         # .epub and a .jar are ZIP archives, an .iso is an archive LinRAR
-        # opens -- and for those the useful drawing is the one that says what
+        # opens, and for those the useful drawing is the one that says what
         # the file is *for*, not the one that says how it is stored.
         drawn = filetypes.icon_for(self.name, self._identity.kind)
         if drawn == "file" and looks_like_archive(self.name):
@@ -378,7 +398,6 @@ class FileListView(QTreeView):
     """Flat, multi-column list view configured to look like WinRAR's."""
 
     activatedItem = pyqtSignal(object)
-    contextRequested = pyqtSignal(object)
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -427,7 +446,7 @@ class FileListView(QTreeView):
             header.setSectionResizeMode(column, QHeaderView.ResizeMode.Interactive)
         # Apply sensible defaults once; after that the user's own widths win.
         # A restored header state counts as "once already done", or the widths
-        # saved on the way out would be overwritten on the way back in — which
+        # saved on the way out would be overwritten on the way back in, which
         # is exactly what used to happen, because the first listing is built
         # after the state is restored.
         if not self._columns_ready:
@@ -654,10 +673,23 @@ def _configure_drag(view: QAbstractItemView) -> None:
 
 
 def _selection(view: QAbstractItemView) -> list[ListingItem]:
+    """The rows the user has picked, in listing order.
+
+    Read from the selection's *ranges* rather than from ``selectedIndexes``.
+    That call materialises one QModelIndex per cell, so with six columns a
+    Select All over ten thousand files built sixty thousand objects to answer
+    a question about ten thousand rows, every time the selection changed.  The
+    ranges give the same answer in one step per contiguous block.
+    """
     model = view.model()
     if not isinstance(model, FileListModel):
         return []
-    rows = {index.row() for index in view.selectedIndexes()}
+    selection = view.selectionModel()
+    if selection is None:
+        return []
+    rows: set[int] = set()
+    for span in selection.selection():
+        rows.update(range(span.top(), span.bottom() + 1))
     items = [model.item_at(row) for row in sorted(rows)]
     return [i for i in items if i is not None and not i.is_parent]
 

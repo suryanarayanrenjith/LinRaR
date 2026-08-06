@@ -130,7 +130,7 @@ class Task(QThread):
 
 
 class UpdateTask(QThread):
-    """Runs an update — or just the check — off the GUI thread.
+    """Runs an update, or just the check, off the GUI thread.
 
     The same shape as :class:`Task`, for the same reason: the work is slow,
     involves the network and a subprocess, and must never touch a widget.  What

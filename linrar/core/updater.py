@@ -3,7 +3,7 @@
 The release side of this is described in ``docs/VERSIONING.md``: every release
 carries a ``latest.json`` at a permanent address giving the version, the notes,
 what it needs to run, and every download with its SHA-256.  This module is the
-other half — the part that reads that document on a user's machine and, if they
+other half: the part that reads that document on a user's machine and, if they
 ask for it, replaces the copy they are running with the one it describes.
 
 It is deliberately cautious, because it is the one part of LinRAR that rewrites
@@ -17,8 +17,8 @@ LinRAR:
   schema must be one this version understands, the version in it must really be
   newer, the download's SHA-256 must match, and the tarball may only contain
   ordinary files and directories underneath its own top folder.
-* **Everything is backed up before anything is replaced**, and any failure —
-  including one from ``install.sh`` — restores the backup before the error is
+* **Everything is backed up before anything is replaced**, and any failure,
+  including one from ``install.sh``, restores the backup before the error is
   reported.  A failed update leaves the version that was working.
 * The whole run is verified at the end by asking the newly installed copy what
   version it is, in a fresh process.  If it does not answer correctly the
@@ -34,10 +34,12 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
 import tarfile
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -47,7 +49,7 @@ from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 from . import elevation
 from .. import version as versions
 
-#: Where the project this module belongs to lives — the folder holding the
+#: Where the project this module belongs to lives: the folder holding the
 #: ``linrar`` package, ``install.sh`` and the rest of the tree.  Everything the
 #: updater replaces is inside it.
 PROJECT_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -83,8 +85,23 @@ OWNED_FILES = frozenset({
 CHECK_TIMEOUT = 15
 DOWNLOAD_TIMEOUT = 60
 
+#: The most of a manifest that is ever read.  A release document is a few
+#: kilobytes; anything claiming to be one and arriving without end is a server
+#: filling this process's memory, not a release.
+MANIFEST_LIMIT = 1024 * 1024
+
+#: The most a release tarball may be, whatever the manifest claims.  A source
+#: release is a couple of megabytes, and the ceiling is what stops a bad
+#: manifest from asking for a download that fills the disk.
+ARTIFACT_LIMIT = 256 * 1024 * 1024
+
 #: Politeness, and it makes LinRAR's traffic identifiable in a log.
 USER_AGENT = f"LinRAR/{versions.__version__} (+{versions.REPOSITORY_URL})"
+
+#: A SHA-256 and nothing else.  A checksum of the right length made of the
+#: wrong characters can never match, so it is refused where it is read rather
+#: than three stages later where the message would be about a bad download.
+_HEX64 = re.compile(r"[0-9a-f]{64}")
 
 #: A download must arrive over TLS.  The only thing that ever turns this off is
 #: ``tests/test_updater.py``, which serves a real release over plain HTTP from
@@ -143,7 +160,7 @@ class UpdateContext:
     #: ``(percent, bytes done, bytes total)`` within the current stage.  The
     #: byte counts are 0 for a stage that is not moving bytes.
     on_progress: Callable[[int, int, int], None] = _noop
-    #: A line for the details pane — everything the updater did, in order.
+    #: A line for the details pane, everything the updater did, in order.
     on_message: Callable[[str], None] = _noop
     #: Consulted between steps and while downloading.
     should_cancel: Callable[[], bool] = lambda: False
@@ -264,7 +281,7 @@ def eligibility(project: str = "") -> Eligibility:
             False,
             "This copy was not installed from a release.",
             "It is a source checkout, so it updates with git rather than from "
-            "the releases page — LinRAR will not overwrite a working tree.",
+            "the releases page; LinRAR will not overwrite a working tree.",
         )
     if os.path.isdir(os.path.join(project, ".git")):
         return Eligibility(
@@ -339,12 +356,49 @@ class Update:
         return self.released[:10]
 
 
+class _HttpsOnlyRedirects(urllib.request.HTTPRedirectHandler):
+    """A redirect handler that refuses to be walked down to plain HTTP.
+
+    ``urllib`` follows a 302 from ``https://`` to ``http://`` without a word.
+    Checking the URL in the manifest is therefore not enough on its own:
+    whoever answers the first request chooses where the second one goes, and
+    that is exactly the party this check exists to distrust.
+    """
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        if REQUIRE_HTTPS and not newurl.lower().startswith("https://"):
+            raise urllib.error.URLError(
+                f"refused a redirect to an insecure address: {newurl}"
+            )
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+def _opener() -> urllib.request.OpenerDirector:
+    """The one opener the updater uses, with redirects kept on HTTPS."""
+    return urllib.request.build_opener(_HttpsOnlyRedirects())
+
+
+def _require_secure(url: str, what: str) -> None:
+    """Refuse an address the update machinery must not be pointed at.
+
+    Everything here ends in code being written over the running install, so
+    ``file://`` and ``http://`` are not addresses this module will read from,
+    whether they came from a manifest or from a setting.
+    """
+    if REQUIRE_HTTPS and not url.lower().startswith("https://"):
+        raise UpdateError(
+            f"{what} would be fetched over an insecure connection.",
+            f"{url}\n\nLinRAR only reads update information over HTTPS.",
+        )
+
+
 def _fetch(url: str, timeout: int) -> bytes:
     """GET *url*, turning every network failure into one worth reading."""
+    _require_secure(url, "The update manifest")
     request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
     try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:
-            return response.read()
+        with _opener().open(request, timeout=timeout) as response:
+            return response.read(MANIFEST_LIMIT + 1)[:MANIFEST_LIMIT]
     except urllib.error.HTTPError as error:
         if error.code == 404:
             raise UpdateError(
@@ -433,16 +487,27 @@ def _pick_artifact(entries: Any) -> Artifact:
         )
         if not artifact.name.endswith(".tar.gz") or not artifact.url:
             continue
-        if len(artifact.sha256) != 64:
+        if len(artifact.sha256) != 64 or not _HEX64.fullmatch(artifact.sha256):
             raise UpdateError(
                 "The update has no usable checksum, so it cannot be trusted.",
                 f"{artifact.name} declares sha256={artifact.sha256!r}.",
             )
-        if REQUIRE_HTTPS and not artifact.url.startswith("https://"):
+        # The name is used to build a path in the cache, so it may only be a
+        # file name: a manifest offering "../../.bashrc" would otherwise pick
+        # where its download lands.
+        if (artifact.name != os.path.basename(artifact.name)
+                or artifact.name.startswith(".")):
             raise UpdateError(
-                "The update would be downloaded over an insecure connection.",
-                artifact.url,
+                "The update names its download in a way LinRAR will not use.",
+                f"{artifact.name!r} is not a plain file name.",
             )
+        if artifact.size <= 0 or artifact.size > ARTIFACT_LIMIT:
+            raise UpdateError(
+                "The update declares an implausible download size.",
+                f"{artifact.name} says {artifact.size} bytes; LinRAR accepts "
+                f"up to {ARTIFACT_LIMIT // (1024 * 1024)} MB.",
+            )
+        _require_secure(artifact.url, "The update")
         return artifact
     raise UpdateError("The update manifest has no source download in it.")
 
@@ -502,7 +567,7 @@ def check(
                              allow_prerelease=allow_prerelease):
         ctx.progress(100)
         if update.prerelease and not allow_prerelease:
-            # Not "up to date" — there is something newer, it is simply not
+            # Not "up to date"; there is something newer, it is simply not
             # the kind of thing this user asked to be offered.
             ctx.log(f"{update.version} is a pre-release; not offering it.")
         else:
@@ -557,6 +622,7 @@ def download(update: Update, ctx: UpdateContext, *, directory: str = "") -> str:
         ctx.log("The cached copy does not match; downloading again.")
 
     ctx.log(f"Downloading {artifact.url}")
+    _require_secure(artifact.url, "The update")
     request = urllib.request.Request(
         artifact.url, headers={"User-Agent": USER_AGENT}
     )
@@ -564,7 +630,7 @@ def download(update: Update, ctx: UpdateContext, *, directory: str = "") -> str:
     started = time.monotonic()
     received = 0
     try:
-        with urllib.request.urlopen(request, timeout=DOWNLOAD_TIMEOUT) as response:
+        with _opener().open(request, timeout=DOWNLOAD_TIMEOUT) as response:
             declared = response.headers.get("Content-Length")
             total = int(declared) if declared and declared.isdigit() else artifact.size
             if total and artifact.size and total != artifact.size:
@@ -891,7 +957,7 @@ def prune_empty_directories(project: str) -> int:
     accumulates one update at a time.
     """
     removed = 0
-    for root, directories, _names in os.walk(project, topdown=False):
+    for root, _directories, _names in os.walk(project, topdown=False):
         if os.path.relpath(root, project).split(os.sep)[0] in PRESERVED:
             continue
         if root == project:
@@ -1022,7 +1088,15 @@ def restore(project: str, backup: str, ctx: Optional[UpdateContext] = None) -> N
 
 
 def _run(argv: List[str], ctx: UpdateContext, cwd: str, timeout: int = 900) -> int:
-    """Run a command, streaming its output into the details pane."""
+    """Run a command, streaming its output into the details pane.
+
+    The deadline is enforced whether or not the child says anything.  Reading
+    its output in this thread and checking the clock between lines only works
+    while lines keep arriving; a script that wedged silently would have been
+    waited on for ever, in the middle of an update, with the old version
+    already replaced.  So the reading is done on a helper thread and the wait
+    is the one with the timeout on it.
+    """
     ctx.log("$ " + " ".join(argv))
     try:
         process = subprocess.Popen(
@@ -1036,14 +1110,28 @@ def _run(argv: List[str], ctx: UpdateContext, cwd: str, timeout: int = 900) -> i
     except OSError as error:
         raise UpdateError(f"Could not run {argv[0]}.", str(error)) from None
 
-    deadline = time.monotonic() + timeout
     assert process.stdout is not None
-    for line in process.stdout:
-        ctx.log("    " + line.rstrip())
-        if time.monotonic() > deadline:
-            process.kill()
-            raise UpdateError(f"{argv[0]} took too long and was stopped.")
-    return process.wait()
+
+    def pump(stream) -> None:
+        try:
+            for line in stream:
+                ctx.log("    " + line.rstrip())
+        except (OSError, ValueError):        # pragma: no cover - closed early
+            pass
+
+    reader = threading.Thread(
+        target=pump, args=(process.stdout,), daemon=True, name="linrar-update-log"
+    )
+    reader.start()
+    try:
+        code = process.wait(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.wait()
+        reader.join(timeout=2)
+        raise UpdateError(f"{argv[0]} took too long and was stopped.") from None
+    reader.join(timeout=5)
+    return code
 
 
 def _install_argv(project: str, receipt: Receipt) -> List[str]:
@@ -1066,8 +1154,11 @@ def _refresh_requirements(project: str, backup: str, ctx: UpdateContext) -> None
     new = os.path.join(project, "requirements.txt")
     old = os.path.join(backup, "requirements.txt")
     try:
-        if os.path.isfile(old) and open(old).read() == open(new).read():
-            return
+        if os.path.isfile(old):
+            with open(old, encoding="utf-8") as before, \
+                    open(new, encoding="utf-8") as after:
+                if before.read() == after.read():
+                    return
     except OSError:
         return
     python = os.path.join(project, ".venv", "bin", "python")
@@ -1325,8 +1416,8 @@ def run_update(
 def restart_command(project: str = "") -> List[str]:
     """How to start the new version, best answer first.
 
-    The installed launcher if there is one — it is what the desktop uses and
-    what the user's PATH points at — otherwise this project's own interpreter.
+    The installed launcher if there is one, it is what the desktop uses and
+    what the user's PATH points at, otherwise this project's own interpreter.
     """
     project = project or PROJECT_DIR
     receipt = read_receipt(project)

@@ -10,7 +10,7 @@ linrar
 Nothing is copied out of this folder: LinRAR runs from where you cloned it, and
 the launcher points back at it. Move the folder and re-run `./install.sh`.
 
-**Linux only — it does not run on Windows at all.** LinRAR drives the Linux
+**Linux only; it does not run on Windows at all.** LinRAR drives the Linux
 builds of `rar`, `unrar`, `7z` and `zip`, stores its settings under the XDG
 base directories, and registers itself with a freedesktop.org desktop. The
 installer, the uninstaller and the application all check `uname` /
@@ -24,7 +24,7 @@ distribution, not on the Windows side.
 
 | Flag | Effect |
 |---|---|
-| `--user` | install for the current user only — the default |
+| `--user` | install for the current user only: the default |
 | `--system` | install for every user, under `/usr/local` (needs administrator rights) |
 | `--no-deps` | do not touch system packages; set the app up only |
 | `--keep-venv` | reuse the existing `.venv` instead of rebuilding it |
@@ -38,7 +38,7 @@ distribution, not on the Windows side.
 ## It installs once
 
 A second `./install.sh` over a working install is **refused**. It prints what
-is already there — version, date, mode, project folder, launcher — changes
+is already there, version, date, mode, project folder, launcher, changes
 nothing at all, and exits with status `3`:
 
 ```
@@ -79,7 +79,7 @@ A user install writes only inside your home directory:
 ~/.local/share/icons/hicolor/*/apps/linrar.{png,svg}  icon, nine raster sizes
 ~/.local/share/pixmaps/linrar.png                     legacy icon location
 ~/.local/share/kio/servicemenus/linrar.desktop        Dolphin right-click menu
-~/.local/share/kservices5/ServiceMenus/linrar.desktop   … older Plasma
+~/.local/share/kservices5/ServiceMenus/linrar.desktop   ... older Plasma
 ~/.local/share/nemo/actions/linrar-*.nemo_action      Nemo right-click actions
 ~/.local/share/{nautilus,nemo,caja}/scripts/LinRAR*   Scripts submenu entries
 ~/.local/share/linrar/install-receipt                 the install receipt
@@ -110,7 +110,7 @@ it. `linrar --config-info` prints exactly what is in force and where each value
 came from.
 
 It is never overwritten, not even by `--reinstall`. On uninstall it is removed
-only if it is still byte for byte what `install.sh` wrote — a file you have
+only if it is still byte for byte what `install.sh` wrote; a file you have
 edited is kept, and named, unless you pass `--purge-settings`.
 
 ## Uninstalling
@@ -124,7 +124,7 @@ edited is kept, and named, unless you pass `--purge-settings`.
 ./uninstall.sh --force            # clean up even with no receipt
 ```
 
-The folder containing LinRAR is never deleted — remove it yourself when you are
+The folder containing LinRAR is never deleted; remove it yourself when you are
 done with it.
 
 ## Distributions
@@ -158,11 +158,11 @@ squashfs-tools libsecret`) and you re-run with `--no-deps`. PyQt6 from pip needs
 *multiverse*, Fedora in *RPM Fusion nonfree*, Arch only in the AUR, and Void
 not at all. Reading RAR archives only needs `unrar`; without `rar` you cannot
 *create* them. Install RARLAB's own build anywhere on the system and point
-LinRAR at it in **Settings → Tools and system**.
+LinRAR at it in **Settings > Tools and system**.
 
 ## The Dependencies manager
 
-Everything below can be done from inside LinRAR, from **Tools → Dependencies**
+Everything below can be done from inside LinRAR, from **Tools > Dependencies**
 or the highlighted **Deps** button on the toolbar. The README has the
 [walkthrough](../README.md#setting-up-the-tools); this is the reference.
 
@@ -192,20 +192,20 @@ the command to paste into a terminal instead of failing silently.
 Package changes need root. LinRAR asks once per session, through whichever
 tool your system has:
 
-- **pkexec** — your desktop's own authentication dialog. Preferred, because
+- **pkexec**: your desktop's own authentication dialog. Preferred, because
   LinRAR never sees your password.
-- **sudo** / **doas** — LinRAR asks for the password itself and passes it to
+- **sudo** / **doas**; LinRAR asks for the password itself and passes it to
   the helper's standard input. It is used once and not stored; `sudo -v` is
   refreshed in the background so the authorisation survives for the session
   (about fifteen minutes past the last use).
 
 If sudo is configured to run without a password, nothing is asked at all.
-**Settings → Tools and system** chooses which tool to use if you have several.
+**Settings > Tools and system** chooses which tool to use if you have several.
 
 ### Status and versions
 
 Each component is probed by running it and reading the version out of its
-banner, so what you see is the tool that will actually run — not merely a
+banner, so what you see is the tool that will actually run, not merely a
 package the distribution believes is installed. The location column shows the
 resolved path, which is how you confirm LinRAR picked up the `rar` you meant
 when several are present.
@@ -217,9 +217,9 @@ nonfree*, Arch only in the AUR, and Void does not package it at all. The
 Details pane says which applies to you. If your distribution has no package:
 
 1. Download RARLAB's Linux build from [rarlab.com](https://www.rarlab.com/download.htm).
-2. Unpack it anywhere — `/opt/rar` and `~/.local/bin` are both searched
+2. Unpack it anywhere; `/opt/rar` and `~/.local/bin` are both searched
    automatically.
-3. Press **Re-scan** in **Settings → Tools and system**, or point straight at
+3. Press **Re-scan** in **Settings > Tools and system**, or point straight at
    the binary there if you put it somewhere unusual. Either way LinRAR picks it
    up without a restart.
 
@@ -230,7 +230,7 @@ does package.
 
 LinRAR looks for each program in this order:
 
-1. the path you set in **Settings → Tools and system** (empty means "search");
+1. the path you set in **Settings > Tools and system** (empty means "search");
 2. `PATH`;
 3. `/usr/local/bin`, `/usr/bin`, `/opt/bin`, `/opt/rar`, `/opt/local/bin`,
    `/snap/bin`, `/usr/lib/p7zip`, `/usr/libexec/p7zip`, `~/.local/bin`,
@@ -267,7 +267,7 @@ sudo dnf install xcb-util-cursor mesa-libGL # Fedora
 sudo pacman -S xcb-util-cursor              # Arch
 ```
 
-**Nothing happens when I run `linrar`.** Run it from a terminal — the error
+**Nothing happens when I run `linrar`.** Run it from a terminal; the error
 goes to stdout. `linrar --self-test` builds the whole window offscreen and
 exits, which separates "Qt cannot start" from "the app is broken".
 

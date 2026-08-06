@@ -1,7 +1,7 @@
 """Tools > Calculate checksums.
 
 Shows every digest for every selected file at once, because the question is
-almost never "what is the MD5" — it is "does this match what the download page
+almost never "what is the MD5"; it is "does this match what the download page
 said", and the page could have said any of them.  Pasting the published value
 into the box at the bottom marks the file that matches it.
 """
@@ -52,7 +52,7 @@ class ChecksumDialog(QDialog):
         total = sum(r.size for r in readable)
         heading = QLabel(
             f"{len(readable)} file(s), {format_size_short(total)}"
-            + (f"  ·  {len(results) - len(readable)} could not be read"
+            + (f", {len(results) - len(readable)} could not be read"
                if len(readable) != len(results) else "")
         )
         layout.addWidget(heading)

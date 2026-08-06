@@ -6,6 +6,19 @@ password-protected *creation* shells out (to ``zip`` or ``7z``), because
 :mod:`zipfile` can read encrypted entries but cannot write them.  Entries that
 use AES or exotic compression methods are transparently handed to the 7-Zip
 backend when it is installed.
+
+Two things this file is careful about, both of which used to be wrong:
+
+**A password never goes in the command line.**  ``zip -P secret`` would put it
+in the process table, where on a stock Linux every other account on the machine
+can read ``/proc/<pid>/cmdline`` for as long as the command runs.  ``zip -e``
+asks at a terminal instead, so the child is given one of its own and the answer
+is typed at it.
+
+**An archive that came out unencrypted is destroyed, not returned.**  Driving a
+tool through a prompt is only safe if the result is checked, so
+:meth:`ZipBackend._require_encrypted` reads the archive back and refuses to
+call it protected unless every file just written really is.
 """
 
 from __future__ import annotations
@@ -14,13 +27,13 @@ import fnmatch
 import os
 import shutil
 import stat
-import subprocess
 import tempfile
 import zipfile
 from datetime import datetime
 from typing import Optional
 
 from .. import tools
+from ..process import ProcessRunner, PtyUnavailable
 from ..models import (
     ArchiveEntry,
     ArchiveFormat,
@@ -60,7 +73,9 @@ class ZipBackend(ArchiveBackend):
             with zipfile.ZipFile(path) as archive:
                 raw_comment = archive.comment or b""
                 info.comment = raw_comment.decode("utf-8", "replace").strip()
-                for item in archive.infolist():
+                listing = archive.infolist()
+                self.check_entry_count(len(listing), path)
+                for item in listing:
                     info.entries.append(self._entry_from_info(item))
         except zipfile.BadZipFile as exc:
             fallback = self._retry_with_sevenzip(
@@ -127,7 +142,7 @@ class ZipBackend(ArchiveBackend):
 
         zipfile is stricter than the format is in practice: a spanned archive,
         one with a self-extracting stub in front of it, one whose central
-        directory disagrees with its local headers — 7-Zip opens all of them,
+        directory disagrees with its local headers.  7-Zip opens all of them,
         and refusing outright told the user their archive was broken when the
         reader simply was not up to it.
 
@@ -219,10 +234,17 @@ class ZipBackend(ArchiveBackend):
                     mode = item.external_attr >> 16
                     if stat.S_ISLNK(mode):
                         # Recreate symlinks instead of writing their target
-                        # path into a regular file.  The per-file realpath
-                        # check above keeps later writes from being routed
-                        # through a hostile link.
+                        # path into a regular file, but only when the link
+                        # stays inside the destination: one that escapes is a
+                        # trap left in a folder the user may pass on, and it
+                        # would also let a later member be written through it.
                         link_target = archive.read(item).decode("utf-8", "replace")
+                        if not _link_stays_inside(target, link_target, dest_real):
+                            ctx.on_message(
+                                f"Skipping unsafe link: {name} -> {link_target}"
+                            )
+                            ctx.advance(100)
+                            continue
                         _silent_unlink(target)
                         try:
                             os.symlink(link_target, target)
@@ -334,7 +356,9 @@ class ZipBackend(ArchiveBackend):
                 return None
         target = os.path.normpath(os.path.join(destination, clean))
         anchor = os.path.join(destination, "")
-        if target != destination.rstrip(os.sep) and not target.startswith(anchor):
+        # Strictly inside: a member that resolves to the destination folder
+        # itself is not a file the archive may write either.
+        if target == destination or not target.startswith(anchor):
             return None
         return target
 
@@ -414,9 +438,11 @@ class ZipBackend(ArchiveBackend):
         level = _LEVELS[options.method]
 
         existing: dict[str, zipfile.ZipInfo] = {}
+        existing_comment = b""
         if os.path.exists(options.archive_path):
             try:
                 with zipfile.ZipFile(options.archive_path) as current:
+                    existing_comment = current.comment or b""
                     for item in current.infolist():
                         existing[item.filename.rstrip("/")] = item
             except zipfile.BadZipFile as exc:
@@ -448,24 +474,26 @@ class ZipBackend(ArchiveBackend):
         ctx.plan({arcname: size for _s, arcname, size in plan})
 
         # Build the result beside the target and swap atomically, so a failure
-        # part-way through never corrupts an archive being updated.
+        # part-way through never corrupts an archive being updated.  mkstemp
+        # makes its file private, which an archive is not, so the mode is put
+        # back before the swap: either what the archive being updated had, or
+        # what an ordinary create would have given it.
         out_dir = os.path.dirname(os.path.abspath(options.archive_path)) or "."
+        previous_mode = _mode_of(options.archive_path)
         handle, temp_path = tempfile.mkstemp(dir=out_dir, suffix=".zip")
         os.close(handle)
         try:
             with zipfile.ZipFile(
                 temp_path, "w", compression=method, compresslevel=level
             ) as archive:
+                # The comment was read with the listing above rather than by
+                # opening the archive a second time to fetch one field.
                 if options.comment:
                     archive.comment = options.comment.encode("utf-8")
-                elif existing:
-                    try:
-                        with zipfile.ZipFile(options.archive_path) as current:
-                            archive.comment = current.comment
-                    except (OSError, zipfile.BadZipFile):
-                        pass
+                elif existing_comment:
+                    archive.comment = existing_comment
 
-                if existing:
+                if kept:
                     with zipfile.ZipFile(options.archive_path) as current:
                         for item in sorted(kept, key=lambda i: i.filename):
                             if ctx.cancelled:
@@ -489,6 +517,7 @@ class ZipBackend(ArchiveBackend):
                     archive.write(source, arcname)
                     ctx.advance(100)
                 ctx.finish()
+            _inherit_mode(temp_path, previous_mode)
             os.replace(temp_path, options.archive_path)
         except OSError as exc:
             _silent_unlink(temp_path)
@@ -559,10 +588,17 @@ class ZipBackend(ArchiveBackend):
     ) -> None:
         """Encrypted ZIP creation via the ``zip`` tool (or 7z as a fallback).
 
-        Both tools only accept the password as a command line argument, which
-        is briefly visible in the process list on a multi-user machine; RAR
-        archives take theirs over stdin and are not affected.  ``zip -e``
-        cannot be used here because it insists on prompting at a terminal.
+        ``zip -e`` is used rather than ``zip -P secret``: the second puts the
+        password in the process table, where on a stock Linux any other account
+        on the machine can read it out of ``/proc/<pid>/cmdline`` for as long
+        as the command runs.  ``-e`` asks at a terminal instead, so LinRAR
+        gives the child one of its own and types the answer (see
+        :class:`~linrar.core.process.ProcessRunner`).
+
+        Whatever route it took, the archive is read back before it is handed
+        over: :meth:`_require_encrypted` refuses to call an unencrypted archive
+        a protected one, which is what makes it safe to drive a tool through a
+        prompt at all.
         """
         base = options.base_folder
         if not base and files:
@@ -575,7 +611,7 @@ class ZipBackend(ArchiveBackend):
         zip_exe = tools.locate("zip")
         seven = self._sevenzip_fallback()
         if zip_exe:
-            argv = [zip_exe, "-P", options.password, f"-{_LEVELS[options.method]}"]
+            argv = [zip_exe, "-e", f"-{_LEVELS[options.method]}"]
             if options.recurse_subfolders:
                 argv.append("-r")
             if not options.store_paths:
@@ -586,25 +622,55 @@ class ZipBackend(ArchiveBackend):
                 argv.extend(["-x", pattern])
 
             ctx.on_message("Creating encrypted ZIP archive...")
-            proc = subprocess.run(
-                argv, cwd=base or None, capture_output=True
+            existed = os.path.exists(target)
+            already_plain = self._plain_members(target) if existed else set()
+            # zip asks for the password, then asks again to verify it.
+            runner = ProcessRunner(
+                argv,
+                cwd=base or None,
+                on_line=lambda line: ctx.on_message(line) if line.strip() else None,
+                prompt_answers=[options.password, options.password],
             )
-            if proc.returncode != 0:
+            ctx.attach(runner)
+            try:
+                code = runner.run()
+            except PtyUnavailable as exc:
+                raise OperationError(
+                    "The encrypted ZIP archive was not created.\n\n"
+                    "LinRAR gives the 'zip' command a terminal of its own so "
+                    "that the password never appears in the process list, and "
+                    f"this system would not provide one.\n\n({exc})\n\n"
+                    "Install 7-Zip, or use the RAR format, which encrypts "
+                    "natively."
+                ) from exc
+            finally:
+                ctx.detach()
+            if code != 0:
+                if not existed:
+                    _silent_unlink(target)
                 raise OperationError(
                     "Failed to create the encrypted ZIP archive.\n\n"
-                    + (proc.stderr or proc.stdout).decode("utf-8", "replace").strip()
+                    + _terminal_tail(runner.output)
                 )
+            self._require_encrypted(target, already_plain, existed)
         elif seven is not None:
+            existed = os.path.exists(target)
+            already_plain = self._plain_members(target) if existed else set()
             argv = [
                 seven.exe, "a", "-tzip", "-bso0", "-bsp1", "-y",
-                f"-mx{_LEVELS[options.method]}", f"-p{options.password}",
+                f"-mx{_LEVELS[options.method]}",
+                # Bare: the secret is typed at the prompt, not put in argv.
+                "-p",
             ]
             for pattern in options.exclude_patterns:
                 argv.append(f"-xr!{pattern}")
             argv.extend(["--", target])
             argv.extend(relative)
             ctx.on_message("Creating encrypted ZIP archive with 7-Zip...")
-            seven.run_raw(argv, ctx, cwd=base or None)
+            seven.run_raw(
+                argv, ctx, cwd=base or None, password=options.password
+            )
+            self._require_encrypted(target, already_plain, existed)
         else:
             raise OperationError(
                 "Creating a password-protected ZIP archive requires either "
@@ -619,6 +685,61 @@ class ZipBackend(ArchiveBackend):
             self.test(options.archive_path, options.password, ctx)
         if options.delete_after:
             _delete_sources(files)
+
+    @staticmethod
+    def _plain_members(path: str) -> set[str]:
+        """The names of the unencrypted files in *path*; empty if unreadable."""
+        try:
+            with zipfile.ZipFile(path) as archive:
+                return {
+                    item.filename for item in archive.infolist()
+                    if not item.is_dir() and not (item.flag_bits & 0x1)
+                }
+        except (OSError, zipfile.BadZipFile):
+            return set()
+
+    @classmethod
+    def _require_encrypted(
+        cls, path: str, already_plain: set[str], existed: bool
+    ) -> None:
+        """Prove the files just written really are encrypted.
+
+        The whole point of the exercise is that the user asked for a password,
+        so an archive that came out without one is worse than no archive at
+        all: it looks like the protected thing they asked for.  Anything left
+        unprotected is reported, and an archive LinRAR itself has just created
+        is deleted rather than handed back as a qualified success.
+
+        *already_plain* names the files that were unencrypted before the run
+        began.  Adding to an existing plain ZIP does not encrypt what was
+        already in it, and complaining about those would refuse a perfectly
+        ordinary operation.
+        """
+        try:
+            with zipfile.ZipFile(path) as archive:
+                total = sum(1 for item in archive.infolist() if not item.is_dir())
+        except (OSError, zipfile.BadZipFile) as exc:
+            raise OperationError(
+                "The encrypted ZIP archive could not be read back, so LinRAR "
+                f"cannot vouch for it.\n\n{exc}"
+            ) from exc
+
+        plain = sorted(cls._plain_members(path) - already_plain)
+        if not plain:
+            return
+        if not existed:
+            _silent_unlink(path)
+            raise OperationError(
+                "The archive was written without encryption, so it has been "
+                f"discarded.\n\n{len(plain)} of {total} file(s) came out "
+                f"unprotected, starting with {plain[0]}.\n\n"
+                "Use the RAR format instead, which encrypts natively."
+            )
+        raise OperationError(
+            "These files were added to the archive without encryption:\n  "
+            + "\n  ".join(plain[:5])
+            + ("\n  ..." if len(plain) > 5 else "")
+        )
 
     # -- modification ------------------------------------------------------
 
@@ -677,6 +798,7 @@ class ZipBackend(ArchiveBackend):
                     return new + key[len(old):]
             return None
 
+        previous_mode = _mode_of(path)
         handle, temp_path = tempfile.mkstemp(
             dir=os.path.dirname(os.path.abspath(path)), suffix=".zip"
         )
@@ -706,6 +828,7 @@ class ZipBackend(ArchiveBackend):
                     new_info.comment = item.comment
                     target.writestr(new_info, source.read(item))
                     ctx.on_total(int((index + 1) * 100 / total))
+            _inherit_mode(temp_path, previous_mode)
             os.replace(temp_path, path)
         except Exception as exc:
             _silent_unlink(temp_path)
@@ -770,6 +893,51 @@ def _parent_inside(target: str, dest_real: str) -> bool:
     return parent_real == dest_real or parent_real.startswith(dest_real + os.sep)
 
 
+def _link_stays_inside(target: str, link_target: str, dest_real: str) -> bool:
+    """Would a symlink written at *target* point somewhere inside the extraction?
+
+    An archive can carry a link to ``/etc/shadow`` or to ``../../..``, and one
+    dropped into a folder the user is about to hand to somebody else is a trap
+    laid in their name.  ``unrar`` refuses these by default and so does this.
+    An absolute target is refused outright; a relative one is resolved against
+    where the link will live.
+    """
+    if not link_target or os.path.isabs(link_target):
+        return False
+    resolved = os.path.realpath(
+        os.path.join(os.path.dirname(target), link_target)
+    )
+    return resolved == dest_real or resolved.startswith(dest_real + os.sep)
+
+
+def _default_file_mode() -> int:
+    """0666 less the process umask: what an ordinary ``open()`` would produce.
+
+    An archive built through a temporary file inherits ``mkstemp``'s 0600,
+    which silently makes every archive LinRAR writes private to its author.
+    That is not what creating a file means, so the mode is put back.
+    """
+    current = os.umask(0)
+    os.umask(current)
+    return 0o666 & ~current
+
+
+def _inherit_mode(target: str, previous: Optional[int]) -> None:
+    """Give *target* the mode *previous* had, or the umask default."""
+    mode = previous if previous is not None else _default_file_mode()
+    try:
+        os.chmod(target, mode)
+    except OSError:
+        pass
+
+
+def _mode_of(path: str) -> Optional[int]:
+    try:
+        return stat.S_IMODE(os.stat(path).st_mode)
+    except OSError:
+        return None
+
+
 def _collect_files(paths: list[str], recurse: bool) -> list[tuple[str, int]]:
     """Expand the selection into concrete (path, size) pairs."""
     out: list[tuple[str, int]] = []
@@ -822,3 +990,18 @@ def _silent_unlink(path: str) -> None:
         os.unlink(path)
     except OSError:
         pass
+
+
+def _terminal_tail(output: str, limit: int = 600) -> str:
+    """The last of what a tool printed at its terminal, worth showing.
+
+    A pty echoes back what was typed, so the transcript is filtered for the
+    prompt lines before any of it reaches a message box: the password itself
+    is never echoed, but the words around it are noise.
+    """
+    lines = [
+        line.rstrip()
+        for line in output.splitlines()
+        if line.strip() and "password" not in line.lower()
+    ]
+    return "\n".join(lines)[-limit:].strip()

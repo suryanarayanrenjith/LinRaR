@@ -193,6 +193,26 @@ class RarBackend(ArchiveBackend):
         return base
 
     @staticmethod
+    def _reject_switch_names(names: list[str]) -> None:
+        """Refuse member names rar would read as switches.
+
+        rar has no ``--`` to end its options: an argument beginning with a
+        dash is a switch wherever it appears.  Almost everything passes member
+        names through a list file, where this cannot happen, but ``rn`` takes
+        its pairs on the command line, and a crafted archive holding a member
+        called ``-x@/etc/passwd`` would otherwise turn a rename into whatever
+        that switch does.  Nothing legitimate is lost: a file really called
+        ``-foo`` can still be extracted, only not renamed in place.
+        """
+        offenders = [name for name in names if name.startswith("-")]
+        if offenders:
+            raise OperationError(
+                "These names begin with a dash, which the rar command reads "
+                "as an option rather than as a file, so the operation was "
+                "refused:\n  " + "\n  ".join(offenders[:5])
+            )
+
+    @staticmethod
     def _write_list_file(names: list[str]) -> str:
         """Write member names to a temp file for rar's ``@listfile`` syntax.
 
@@ -222,6 +242,7 @@ class RarBackend(ArchiveBackend):
         )
         self._reject_non_archive(runner.output, path)
         info = self._parse_listing(runner.output, path)
+        self.check_entry_count(len(info.entries), path)
         # "unrar lt" answers a file that is not an archive at all with exit 0
         # and one line of prose, so a listing with neither a header nor a
         # member is a refusal rather than an empty archive.  Without this the
@@ -652,6 +673,9 @@ class RarBackend(ArchiveBackend):
         it is applied in a single invocation.
         """
         exe = self._require_rar()
+        self._reject_switch_names(
+            [name for pair in pairs for name in pair]
+        )
         argv = [exe, "-idc", "rn", "-y", path]
         for old_name, new_name in pairs:
             argv.extend([old_name, new_name])
@@ -804,8 +828,8 @@ def _make_progress_handlers(ctx: TaskContext):
     rar rewrites one terminal line per member: it prints ``Extracting  name``,
     then backspaces over the tail to show ``  0%``, `` 37%`` and finally
     ``  OK`` before the newline.  So the *finished* line and the *live* line
-    both carry the name, and reading it only from the finished one — which is
-    what LinRAR used to do — meant the window named each file as it ended and
+    both carry the name, and reading it only from the finished one, which is
+    what LinRAR used to do, meant the window named each file as it ended and
     counted it one member late.  Both are parsed here, and
     :class:`TaskContext` turns them into the two bars.
     """

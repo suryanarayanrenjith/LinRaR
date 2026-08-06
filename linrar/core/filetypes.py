@@ -16,7 +16,7 @@ what the *Type* column shows.
 and the viewer must not print it as text.
 
 **What should happen when it is opened?**  Not the same as either.  A ``.docx``
-*is* a ZIP archive — genuinely, byte for byte — but somebody who double-clicks
+*is* a ZIP archive, genuinely, byte for byte, but somebody who double-clicks
 one wants their word processor, not a listing of ``word/document.xml``.  That
 distinction is :data:`DOCUMENT_CONTAINERS`, and it is why LinRAR can open a
 ``.docx`` as an archive when asked to and still hand it to LibreOffice when
@@ -405,28 +405,46 @@ _CODE_EXTENSIONS = frozenset({
 })
 
 
+#: Names that stand for themselves rather than for an extension.
+_BARE_CODE_NAMES = frozenset({
+    "makefile", "dockerfile", "gnumakefile", "cmakelists.txt",
+    "vagrantfile", "pkgbuild",
+})
+
+
+@functools.lru_cache(maxsize=16384)
 def icon_for(name: str, kind: Optional[Kind] = None) -> str:
-    """The icon that stands for *name*.  Never touches the disk."""
+    """The icon that stands for *name*.  Never touches the disk.
+
+    Cached because the file list asks once per row per repaint and the answer
+    depends on nothing but the two arguments; a folder is overwhelmingly made
+    of files sharing a handful of extensions, so the cache hits almost every
+    time after the first screenful.
+    """
     base = os.path.basename(name.rstrip("/")).lower()
     extension = extension_of(base)
     if extension in _ICON_BY_EXTENSION:
         return _ICON_BY_EXTENSION[extension]
-    if extension in _CODE_EXTENSIONS or base in ("makefile", "dockerfile",
-                                                 "gnumakefile", "cmakelists.txt",
-                                                 "vagrantfile", "pkgbuild"):
+    if extension in _CODE_EXTENSIONS or base in _BARE_CODE_NAMES:
         return "file-code"
     if kind is None:
         kind = by_name(name).kind
     return _ICON_BY_KIND.get(kind, "file")
 
 
+@functools.lru_cache(maxsize=16384)
 def extension_of(name: str) -> str:
     """The extension of *name*, lowercased, without the dot."""
     return os.path.splitext(name.strip())[1].lstrip(".").lower()
 
 
+@functools.lru_cache(maxsize=16384)
 def by_name(name: str) -> FileType:
-    """What the name says this is.  Never touches the disk."""
+    """What the name says this is.  Never touches the disk.
+
+    :class:`FileType` is frozen, so handing the same instance to several
+    callers is safe, and the answer for a given name never changes.
+    """
     base = os.path.basename(name.rstrip("/")).lower()
     if base in _BY_NAME:
         kind, label = _BY_NAME[base]
@@ -446,7 +464,7 @@ def by_content(data: bytes, name: str = "") -> Optional[FileType]:
     """What the leading bytes say this is, or ``None`` when they say nothing.
 
     The name is consulted only to tell apart things that genuinely share a
-    signature — every ZIP-based document looks exactly like a ZIP archive.
+    signature; every ZIP-based document looks exactly like a ZIP archive.
     """
     if not data:
         return None
@@ -515,7 +533,7 @@ def identify_file(path: str, name: str = "") -> FileType:
     """What *path* is, using its name first and its contents only if needed.
 
     This is what the file list asks about the handful of entries that have no
-    extension to go on — a ``README`` with no suffix, a compiled program, a
+    extension to go on: a ``README`` with no suffix, a compiled program, a
     core dump.  Everything with an extension is answered from the name alone
     and never touches the disk.
     """
@@ -533,7 +551,7 @@ def identify_file(path: str, name: str = "") -> FileType:
 
 
 def _looks_textual(data: bytes, sample: int = 8192) -> bool:
-    """Is this plausibly text? — the same test ``file`` and ``git`` use.
+    """Is this plausibly text?  The same test ``file`` and ``git`` use.
 
     A NUL byte means binary, and so does a high proportion of bytes that are
     not printable in any encoding a text file would use.
@@ -543,7 +561,7 @@ def _looks_textual(data: bytes, sample: int = 8192) -> bool:
         return True
     if b"\x00" in head:
         # Every other byte a NUL is not binary, it is UTF-16 without a byte
-        # order mark — which is what a great many text files written on
+        # order mark, which is what a great many text files written on
         # Windows look like, and they arrive inside downloaded archives all
         # the time.  Calling those binary showed the user a hex dump of an
         # ordinary README.
@@ -585,7 +603,7 @@ def decode(data: bytes) -> str:
     """Turn bytes into text the way a viewer should: never raising.
 
     Byte-order marks are honoured, BOM-less UTF-16 is recognised by its shape,
-    UTF-8 is tried, and latin-1 is the floor — it maps every byte to
+    UTF-8 is tried, and latin-1 is the floor: it maps every byte to
     something, so there is always an answer.
     """
     # The endian-agnostic codecs, not the -le/-be ones: those decode the mark
@@ -623,7 +641,7 @@ def decode(data: bytes) -> str:
 # OOXML, OpenDocument and EPUB are all ZIP containers holding XML.  Getting the
 # text out needs no library: the markup is stripped with a regular expression
 # rather than parsed, which is both faster and immune to the entity-expansion
-# tricks an XML parser has to be defended against — and this is reading files
+# tricks an XML parser has to be defended against, and this is reading files
 # that arrived inside somebody's archive.
 
 _TAG = re.compile(r"<[^>]+>")
@@ -683,7 +701,7 @@ def document_text(data: bytes = b"", path: str = "") -> Optional[str]:
     """The readable text of an OOXML, OpenDocument or EPUB file.
 
     ``None`` when this is not a document LinRAR can read, or when reading it
-    failed — the caller falls through to its next option rather than showing an
+    failed; the caller falls through to its next option rather than showing an
     error, because failing to preview something is not an error worth a dialog.
     """
     import io

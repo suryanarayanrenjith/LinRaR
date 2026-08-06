@@ -9,10 +9,14 @@ terminal would render it, and :class:`ProcessRunner` streams the result.
 
 from __future__ import annotations
 
+import errno
+import fcntl
 import os
+import pty
 import re
 import selectors
 import subprocess
+import termios
 import threading
 from typing import Callable, Iterable, Optional
 
@@ -75,11 +79,41 @@ class LineAssembler:
         return None
 
 
+class PtyUnavailable(RuntimeError):
+    """No pseudo-terminal could be set up for a tool that insists on one."""
+
+
+def _become_session_leader() -> None:
+    """Between fork and exec: adopt the pty as the controlling terminal.
+
+    ``zip -e`` and ``7z -p`` do not read a password from standard input.  They
+    open ``/dev/tty``, which resolves through the *controlling* terminal, and a
+    process started from a desktop has none at all: without this the tools
+    refuse outright ("stderr is not a tty"), and a process that merely
+    inherited the user's own terminal would prompt on it, where nobody is
+    looking.  ``setsid`` puts the child in a session of its own and the ioctl
+    makes its new standard input that session's terminal.
+
+    Runs in the forked child, before exec, so it does nothing but two system
+    calls: no allocation, no imports, nothing that could want a lock another
+    thread holds.
+    """
+    os.setsid()
+    fcntl.ioctl(0, termios.TIOCSCTTY, 0)
+
+
 class ProcessRunner:
     """Runs a command, streaming reconstructed output lines to callbacks.
 
     Passwords are written to the child's stdin rather than passed on the command
     line so they never appear in ``/proc/<pid>/cmdline`` for other users to read.
+
+    *prompt_answers* covers the tools that will not take a password on stdin
+    at all.  The child is then given a pseudo-terminal of its own, and each
+    answer is typed at it the first time the tool falls silent, which is what
+    a tool waiting at a prompt looks like.  They are typed rather than
+    pre-loaded because these tools flush pending terminal input before asking,
+    exactly so that a password cannot be fed to them ahead of the question.
     """
 
     def __init__(
@@ -89,12 +123,14 @@ class ProcessRunner:
         stdin_text: Optional[str] = None,
         on_line: Optional[Callable[[str], None]] = None,
         on_partial: Optional[Callable[[str], None]] = None,
+        prompt_answers: Optional[list[str]] = None,
     ) -> None:
         self.argv = argv
         self.cwd = cwd
         self.stdin_text = stdin_text
         self.on_line = on_line
         self.on_partial = on_partial
+        self.prompt_answers = list(prompt_answers or [])
 
         self._proc: Optional[subprocess.Popen] = None
         self._cancelled = threading.Event()
@@ -125,6 +161,51 @@ class ProcessRunner:
     def cancelled(self) -> bool:
         return self._cancelled.is_set()
 
+    def _start_on_pty(self, env: dict) -> int:
+        """Launch the child with a terminal of its own.  Returns the master fd."""
+        try:
+            master, slave = pty.openpty()
+        except OSError as exc:
+            raise PtyUnavailable(str(exc)) from exc
+        try:
+            attributes = termios.tcgetattr(slave)
+            # Output processing off.  A terminal turns every "\n" the child
+            # writes into "\r\n", and LineAssembler reads a carriage return as
+            # "start this line again" because that is what rar means by one:
+            # left on, every line of output arrives as an empty one.
+            attributes[1] &= ~termios.ONLCR
+            # Echo off before the child starts, so a password typed at the
+            # prompt is never reflected back into the output LinRAR keeps and
+            # shows in a progress log.  The tools turn echo off themselves,
+            # but only once they have reached the prompt.
+            attributes[3] &= ~termios.ECHO
+            termios.tcsetattr(slave, termios.TCSANOW, attributes)
+        except termios.error:
+            pass
+        try:
+            self._proc = subprocess.Popen(
+                self.argv,
+                cwd=self.cwd or None,
+                stdin=slave,
+                stdout=slave,
+                stderr=slave,
+                env=env,
+                close_fds=True,
+                preexec_fn=_become_session_leader,
+            )
+        except FileNotFoundError as exc:
+            os.close(master)
+            os.close(slave)
+            raise RuntimeError(f"Command not found: {self.argv[0]}") from exc
+        except OSError as exc:
+            os.close(master)
+            os.close(slave)
+            raise PtyUnavailable(str(exc)) from exc
+        # The child holds its own end now; ours has to go or the master never
+        # reports end of file.
+        os.close(slave)
+        return master
+
     def run(self) -> int:
         """Execute the command and block until it exits."""
         env = dict(os.environ)
@@ -132,53 +213,72 @@ class ProcessRunner:
         env["LC_ALL"] = "C.UTF-8"
         env.setdefault("LANG", "C.UTF-8")
 
-        try:
-            self._proc = subprocess.Popen(
-                self.argv,
-                cwd=self.cwd or None,
-                stdin=subprocess.PIPE,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                env=env,
-                bufsize=0,
-                start_new_session=True,
-            )
-        except FileNotFoundError as exc:
-            raise RuntimeError(f"Command not found: {self.argv[0]}") from exc
-
-        proc = self._proc
-        assert proc.stdin is not None and proc.stdout is not None
-
-        # Hand over the password (and close stdin) on a helper thread so a
-        # child that never reads stdin cannot deadlock us on a full pipe.
-        def _write_stdin() -> None:
+        on_pty = bool(self.prompt_answers)
+        master = -1
+        if on_pty:
+            master = self._start_on_pty(env)
+            read_fd = master
+            writer = None
+        else:
             try:
-                if self.stdin_text:
-                    proc.stdin.write(self.stdin_text.encode("utf-8"))
-                    proc.stdin.flush()
-            except (BrokenPipeError, OSError, ValueError):
-                pass
-            finally:
+                self._proc = subprocess.Popen(
+                    self.argv,
+                    cwd=self.cwd or None,
+                    stdin=subprocess.PIPE,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    env=env,
+                    bufsize=0,
+                    start_new_session=True,
+                )
+            except FileNotFoundError as exc:
+                raise RuntimeError(f"Command not found: {self.argv[0]}") from exc
+
+            proc = self._proc
+            assert proc.stdin is not None and proc.stdout is not None
+            read_fd = proc.stdout.fileno()
+
+            # Hand over the password (and close stdin) on a helper thread so a
+            # child that never reads stdin cannot deadlock us on a full pipe.
+            def _write_stdin() -> None:
                 try:
-                    proc.stdin.close()
+                    if self.stdin_text:
+                        proc.stdin.write(self.stdin_text.encode("utf-8"))
+                        proc.stdin.flush()
                 except (BrokenPipeError, OSError, ValueError):
                     pass
+                finally:
+                    try:
+                        proc.stdin.close()
+                    except (BrokenPipeError, OSError, ValueError):
+                        pass
 
-        writer = threading.Thread(target=_write_stdin, daemon=True)
-        writer.start()
+            writer = threading.Thread(target=_write_stdin, daemon=True)
+            writer.start()
 
+        proc = self._proc
+        assert proc is not None
+        pending = list(self.prompt_answers)
         assembler = LineAssembler()
         decoder_buf = b""
 
+        def drain() -> bytes:
+            """Read what is there, treating a closed pty as end of file."""
+            try:
+                return os.read(read_fd, 8192)
+            except OSError as exc:
+                # A pty whose child has gone reports EIO rather than EOF.
+                if on_pty and exc.errno not in (errno.EIO, errno.EBADF):
+                    raise
+                return b""
+
         sel = selectors.DefaultSelector()
-        sel.register(proc.stdout, selectors.EVENT_READ)
+        sel.register(read_fd, selectors.EVENT_READ)
         try:
             while True:
-                for _key, _mask in sel.select(timeout=0.1):
-                    try:
-                        chunk = os.read(proc.stdout.fileno(), 8192)
-                    except OSError:
-                        chunk = b""
+                ready = sel.select(timeout=0.1)
+                for _key, _mask in ready:
+                    chunk = drain()
                     if not chunk:
                         raise _StreamClosed
                     decoder_buf += chunk
@@ -186,24 +286,34 @@ class ProcessRunner:
                     text, decoder_buf = _decode_partial(decoder_buf)
                     if text:
                         self._dispatch(assembler.feed(text))
-                if proc.poll() is not None:
-                    # Drain whatever is still buffered in the pipe.
+                if not ready and pending and proc.poll() is None:
+                    # Silence with the child still running is what a prompt
+                    # looks like from out here.
                     try:
-                        while True:
-                            chunk = os.read(proc.stdout.fileno(), 8192)
-                            if not chunk:
-                                break
-                            decoder_buf += chunk
-                            text, decoder_buf = _decode_partial(decoder_buf)
-                            if text:
-                                self._dispatch(assembler.feed(text))
+                        os.write(read_fd, (pending.pop(0) + "\n").encode("utf-8"))
                     except OSError:
-                        pass
+                        pending.clear()
+                    continue
+                if proc.poll() is not None:
+                    # Drain whatever is still buffered.
+                    while True:
+                        chunk = drain()
+                        if not chunk:
+                            break
+                        decoder_buf += chunk
+                        text, decoder_buf = _decode_partial(decoder_buf)
+                        if text:
+                            self._dispatch(assembler.feed(text))
                     break
         except _StreamClosed:
             pass
         finally:
             sel.close()
+            if on_pty and master >= 0:
+                try:
+                    os.close(master)
+                except OSError:
+                    pass
 
         if decoder_buf:
             self._dispatch(assembler.feed(decoder_buf.decode("utf-8", "replace")))
@@ -214,7 +324,8 @@ class ProcessRunner:
                 self.on_line(tail)
 
         proc.wait()
-        writer.join(timeout=1)
+        if writer is not None:
+            writer.join(timeout=1)
         self.returncode = proc.returncode
         return self.returncode
 

@@ -237,7 +237,7 @@ print("== where the system files are looked for")
 saved_env = os.environ.pop("LINRAR_SYSTEM_CONFIG")
 os.environ["XDG_CONFIG_DIRS"] = "/etc/xdg-first:/etc/xdg-second"
 # The ordering is what matters here, and it cannot be observed from the return
-# value on a machine where none of those files exist — so read it from both
+# value on a machine where none of those files exist, so read it from both
 # ends: the constants the search uses, and the shape of the search itself.
 source = open(os.path.join(ROOT, "linrar/core/settings.py")).read()
 check("XDG_CONFIG_DIRS is honoured", "XDG_CONFIG_DIRS" in source)
@@ -293,23 +293,20 @@ theme.apply(app, SETTINGS.get("view/theme"))
 check("the locked theme is the one actually applied", theme.mode() == "dark")
 
 window = MainWindow()
-check("the theme menu entries are disabled",
-      not any(a.isEnabled() for a in window.theme_actions.values()))
+check("the Themes entry is disabled", not window.act_themes.isEnabled())
 check("so are the view modes",
       not any(a.isEnabled() for a in window.view_mode_actions.values()))
 check("and Show hidden files", not window.act_show_hidden.isEnabled())
 check("and the toolbar text toggle", not window.act_toolbar_text.isEnabled())
-check("and the corner theme switch", not window.act_toggle_theme.isEnabled())
-check("and its toolbar button with it", not window.theme_button.isEnabled())
-check("the Theme submenu does not invite a click either",
-      not window.theme_menu.menuAction().isEnabled())
+check("and the button in the menu bar's corner with it",
+      not window.themes_button.isEnabled())
 check("while an unlocked entry is untouched", window.act_show_tree.isEnabled())
 check("the window knows which settings those were",
       set(window.locked_settings) ==
       {"view/theme", "view/mode", "view/show_hidden", "toolbar/style"},
       window.locked_settings)
 check("a disabled entry explains itself",
-      "administrator" in window.theme_actions["dark"].toolTip())
+      "administrator" in window.act_themes.toolTip())
 
 dialog = SettingsDialog(window)
 check("Settings disables the theme box", not dialog.theme_combo.isEnabled())

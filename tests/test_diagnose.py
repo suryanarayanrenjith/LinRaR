@@ -1,5 +1,5 @@
 """Format sniffing and the reports that explain a file that will not open."""
-import os, shutil, stat, subprocess, sys, tempfile
+import os, shutil, stat, sys, tempfile
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from linrar.core import diagnose

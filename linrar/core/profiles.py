@@ -39,30 +39,6 @@ class Profile:
 
     # -- conversion --------------------------------------------------------
 
-    def to_options(self, archive_path: str = "", base_folder: str = "") -> CompressOptions:
-        return CompressOptions(
-            archive_path=archive_path,
-            format=_format_from_value(self.format),
-            method=CompressionMethod(self.method),
-            dictionary_size=self.dictionary_size,
-            volume_size=self.volume_size,
-            update_mode=_update_from_value(self.update_mode),
-            solid=self.solid,
-            recovery_record=self.recovery_record,
-            recovery_percent=self.recovery_percent,
-            create_sfx=self.create_sfx,
-            sfx_format=self.sfx_format,
-            delete_after=self.delete_after,
-            test_after=self.test_after,
-            lock=self.lock,
-            recurse_subfolders=self.recurse_subfolders,
-            store_paths=self.store_paths,
-            encrypt_headers=self.encrypt_headers,
-            exclude_patterns=list(self.exclude_patterns),
-            comment=self.comment,
-            base_folder=base_folder,
-        )
-
     @classmethod
     def from_options(cls, name: str, options: CompressOptions) -> "Profile":
         return cls(
@@ -111,13 +87,6 @@ def _format_from_value(value: str) -> ArchiveFormat:
         if fmt.value == value:
             return fmt
     return ArchiveFormat.RAR5
-
-
-def _update_from_value(value: str) -> UpdateMode:
-    for mode in UpdateMode:
-        if mode.value == value:
-            return mode
-    return UpdateMode.ADD_REPLACE
 
 
 DEFAULT_PROFILES = [
@@ -210,7 +179,7 @@ class ProfileStore:
         The Archive dialog starts from the settings the last archive used, and
         then applies whichever profile is marked as the default.  The profile
         LinRAR ships as "Default" holds nothing but the factory values, so
-        applying it wiped those remembered settings on every single launch —
+        applying it wiped those remembered settings on every single launch:
         change the method to Best, make an archive, and the next one was back
         to Normal.  ``None`` here means "nobody has chosen a default; leave the
         remembered settings alone".

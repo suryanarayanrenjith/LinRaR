@@ -11,12 +11,19 @@ Each theme gets its own build of the set: the shapes never change, but paper
 whites, steel and the drop shadow are re-tuned so nothing glares on the dark
 chrome.  :func:`set_theme` swaps the active build, and the render cache is
 keyed by theme so both can live side by side.
+
+An installed theme pack gets a build too, through :func:`register_build`: its
+manifest re-tunes the same :class:`Ink` record, so a theme changes the icons as
+thoroughly as it changes the chrome without having to ship any artwork.  A pack
+that does want its own artwork can replace individual glyphs outright with SVG
+of its own, which is why the shapes are looked up in a table rather than called
+directly.
 """
 
 from __future__ import annotations
 
 import functools
-from dataclasses import dataclass
+from dataclasses import dataclass, fields as _fields, replace
 
 from PyQt6.QtCore import QByteArray, QRectF, Qt
 from PyQt6.QtGui import QIcon, QImage, QPainter, QPixmap
@@ -45,7 +52,6 @@ class Ink:
     paper_dark: str
     paper_edge: str
     ink: str
-    gloss: str
     shadow_color: str
     shadow_opacity: str
 
@@ -71,7 +77,6 @@ LIGHT_INK = Ink(
     paper_dark="#E9EDF2",
     paper_edge="#8A94A2",
     ink="#5A6472",
-    gloss="#FFFFFF",
     shadow_color="#101820",
     shadow_opacity="0.38",
 )
@@ -99,38 +104,141 @@ DARK_INK = Ink(
     paper_dark="#C6CEDA",
     paper_edge="#767F8C",
     ink="#4C5563",
-    gloss="#FFFFFF",
     shadow_color="#000000",
     shadow_opacity="0.5",
 )
 
+#: The two builds that always exist and can never be replaced.
+BUILTIN_BUILDS = ("light", "dark")
+
+#: How a build is *drawn*, as distinct from what it is drawn with.  A theme
+#: picks one with "icon_style" in its manifest, and it changes every one of the
+#: thirty-nine icons at once, which is the only way a set stays coherent -- a
+#: flat folder beside a glossy 3D wrench looks like a bug, not a theme:
+#:
+#: ``gloss``  the built-in look -- 3D solids, vertical gradients, drop shadow.
+#: ``flat``   one colour per solid, a hard outline, no gradient, no shadow.
+#:            The Windows-95 answer, and what a square-cornered theme wants.
+#: ``neon``   flat fills under an outer glow in the theme's own light, which is
+#:            what makes a dark theme's icons look lit rather than printed.
+#: ``soft``   gradients compressed towards their middle and a gentle shadow:
+#:            the gloss look with the shine taken down.
+STYLES = ("gloss", "flat", "neon", "soft")
+
 _INKS = {"light": LIGHT_INK, "dark": DARK_INK}
-_P = LIGHT_INK          # the build in progress; see _build_set()
+_STYLES = {"light": "gloss", "dark": "gloss"}
+_P = LIGHT_INK          # the palette in progress; see _set()
+_S = "gloss"            # the style in progress, alongside _P
 _MODE = "light"         # the build that icon()/pixmap() serve
+
+#: Build name -> {icon name: SVG}, replacing drawn glyphs for that build.
+_SVG_OVERRIDES: dict[str, dict[str, str]] = {}
+
+#: The :class:`Ink` fields that are a (light, mid, dark) triple rather than one
+#: colour.  ``books`` is three of those, and is handled on its own.
+_INK_TRIPLES = ("green", "red", "blue", "amber", "folder", "steel")
+
+
+def _rgb(value: str) -> tuple[int, int, int]:
+    text = value.lstrip("#")
+    if len(text) == 3:
+        text = "".join(ch * 2 for ch in text)
+    if len(text) == 8:               # #aarrggbb: the alpha is not wanted here
+        text = text[2:]
+    return tuple(int(text[i:i + 2], 16) for i in (0, 2, 4))  # type: ignore
+
+
+def _mix(first: str, second: str, amount: float) -> str:
+    """*amount* of the way from *first* to *second*."""
+    a, b = _rgb(first), _rgb(second)
+    return "#" + "".join(
+        f"{max(0, min(255, round(x + (y - x) * amount))):02X}"
+        for x, y in zip(a, b)
+    )
+
+
+#: How much of a white gloss overlay each style keeps.  Zero is what makes a
+#: flat icon flat: the shapes are the same, the shine is simply not painted.
+_GLOSS = {"gloss": 1.0, "soft": 0.7, "neon": 0.3, "flat": 0.0}
+
+#: How far a gradient's stops are pulled towards its middle one.  One collapses
+#: the gradient to a single colour, which is how "no gradients anywhere" is
+#: expressed without any caller having to know: every url(#...) still resolves.
+_FLATTEN = {"gloss": 0.0, "soft": 0.45, "neon": 0.85, "flat": 1.0}
+
+
+def _gl(opacity: float) -> str:
+    """A white-highlight opacity, scaled for the style being drawn."""
+    return f"{opacity * _GLOSS.get(_S, 1.0):.3g}"
+
+
+def _edge(color: str, width: float = 1.2) -> str:
+    """The hard outline a flat icon needs and a glossy one must not have."""
+    if _S != "flat":
+        return ""
+    return f' stroke="{color}" stroke-width="{width}" stroke-linejoin="round"'
+
+
+def _stops(stops: list[tuple[float, str]]) -> list[tuple[float, str]]:
+    """The stops as this style wants them, pulled towards the middle one."""
+    amount = _FLATTEN.get(_S, 0.0)
+    if not amount:
+        return stops
+    middle = min(stops, key=lambda stop: abs(stop[0] - 0.5))[1]
+    if amount >= 1.0:
+        return [(0, middle), (1, middle)]
+    return [(offset, _mix(color, middle, amount)) for offset, color in stops]
 
 
 def _lin(name: str, stops: list[tuple[float, str]], vertical: bool = True) -> str:
     """A linear gradient definition."""
     coords = 'x1="0" y1="0" x2="0" y2="1"' if vertical else 'x1="0" y1="0" x2="1" y2="0"'
     body = "".join(
-        f'<stop offset="{offset}" stop-color="{color}"/>' for offset, color in stops
+        f'<stop offset="{offset}" stop-color="{color}"/>'
+        for offset, color in _stops(stops)
     )
     return f'<linearGradient id="{name}" {coords}>{body}</linearGradient>'
 
 
 def _diag(name: str, stops: list[tuple[float, str]]) -> str:
     body = "".join(
-        f'<stop offset="{offset}" stop-color="{color}"/>' for offset, color in stops
+        f'<stop offset="{offset}" stop-color="{color}"/>'
+        for offset, color in _stops(stops)
     )
     return f'<linearGradient id="{name}" x1="0" y1="0" x2="1" y2="1">{body}</linearGradient>'
 
 
 def _shadow() -> str:
+    """The filter every glyph references, whatever the style does with it.
+
+    Always defined, and always called ``sh``: the shapes say
+    ``filter="url(#sh)"`` and none of them should have to know which style is
+    in force.  A style that wants no shadow gets a filter that passes the
+    graphic straight through, rather than the reference dangling -- which some
+    renderers answer with nothing at all.
+    """
+    if _S == "flat":
+        return ('<filter id="sh" x="-5%" y="-5%" width="110%" height="110%">'
+                '<feOffset dx="0" dy="0" in="SourceGraphic"/></filter>')
+    if _S == "neon":
+        # Lit from inside rather than lying on a surface: the glow is the
+        # theme's own brightest ink, so it reads as the icon's own colour.
+        glow = _P.books[2][0]
+        return f"""
+<filter id="sh" x="-45%" y="-45%" width="190%" height="190%">
+  <feDropShadow dx="0" dy="0" stdDeviation="1.6"
+                flood-color="{glow}" flood-opacity="0.85"/>
+  <feDropShadow dx="0" dy="0" stdDeviation="3.4"
+                flood-color="{glow}" flood-opacity="0.4"/>
+</filter>
+"""
+    soft = _S == "soft"
     return f"""
 <filter id="sh" x="-30%" y="-30%" width="170%" height="170%">
-  <feDropShadow dx="0" dy="1.1" stdDeviation="1.1"
+  <feDropShadow dx="0" dy="{0.6 if soft else 1.1}"
+                stdDeviation="{0.8 if soft else 1.1}"
                 flood-color="{_P.shadow_color}"
-                flood-opacity="{_P.shadow_opacity}"/>
+                flood-opacity="{float(_P.shadow_opacity) * (0.6 if soft else 1.0):.3g}"/>
 </filter>
 """
 
@@ -157,10 +265,10 @@ def _book(x: float, y: float, w: float, h: float, d: float, index: int) -> str:
       <path d="M{x} {y} l{d} -{d} h{w} l-{d} {d} z" fill="url(#{gid}t)"/>
       <!-- front cover -->
       <rect x="{x}" y="{y}" width="{w}" height="{h}" rx="1.2"
-            fill="url(#{gid})"/>
+            fill="url(#{gid})"{_edge(dark)}/>
       <!-- gloss -->
       <path d="M{x + 0.9} {y + 0.9} h{w - 1.8} v{h * 0.36} h-{w - 1.8} z"
-            fill="#ffffff" opacity="0.22"/>
+            fill="#ffffff" opacity="{_gl(0.22)}"/>
     </g>
     """
 
@@ -190,12 +298,14 @@ def _folder(x: float = 3, y: float = 11, w: float = 42, h: float = 29) -> str:
     return f"""
     <g filter="url(#sh)">
       <path d="M{x} {y + 3} a2.5 2.5 0 0 1 2.5-2.5 h12 l4 4 h{w - 20}
-               a2.5 2.5 0 0 1 2.5 2.5 v3 h-{w} z" fill="url(#fdb)"/>
+               a2.5 2.5 0 0 1 2.5 2.5 v3 h-{w} z"
+            fill="url(#fdb)"{_edge(_P.folder[2])}/>
       <path d="M{x + 1} {y + 8} h{w - 2} a2.5 2.5 0 0 1 2.5 2.5 v{h - 12}
                a2.5 2.5 0 0 1 -2.5 2.5 h-{w - 2} a2.5 2.5 0 0 1 -2.5 -2.5
-               v-{h - 12} a2.5 2.5 0 0 1 2.5 -2.5 z" fill="url(#fdf)"/>
+               v-{h - 12} a2.5 2.5 0 0 1 2.5 -2.5 z"
+            fill="url(#fdf)"{_edge(_P.folder[2])}/>
       <path d="M{x + 1} {y + 8} h{w - 2} v{(h - 12) * 0.42} h-{w - 2} z"
-            fill="#ffffff" opacity="0.28"/>
+            fill="#ffffff" opacity="{_gl(0.28)}"/>
     </g>
     """
 
@@ -254,12 +364,25 @@ def _band(mid: str, dark: str, mark: str = "") -> str:
     # it is only context.
     return f"""
       <rect x="4.5" y="25.5" width="34" height="17" rx="3.4" fill="{dark}"/>
-      <rect x="5.7" y="26.7" width="31.6" height="14.6" rx="2.8" fill="{mid}"/>
+      <rect x="5.7" y="26.7" width="31.6" height="14.6" rx="2.8" fill="{mid}"
+            {_edge(dark, 1.0)}/>
       <rect x="6.9" y="27.9" width="29.2" height="5.2" rx="2.2" fill="#ffffff"
-            opacity="0.22"/>
+            opacity="{_gl(0.22)}"/>
       <g stroke="#ffffff" fill="none" stroke-width="2"
          stroke-linecap="round" stroke-linejoin="round">{mark}</g>
     """
+
+
+def _band_ink(role: tuple[str, str, str], deeper: float = 0.0) -> tuple[str, str]:
+    """(mid, dark) for a file band, out of one of the palette's own triples.
+
+    *deeper* walks the pair towards the dark end, which is how fifteen kinds of
+    file are told apart using six inks: the same hue, a different depth.
+    """
+    mid, dark = role[1], role[2]
+    if deeper:
+        return _mix(mid, dark, deeper), _mix(dark, "#000000", deeper * 0.45)
+    return mid, dark
 
 
 def _typed_file(mid: str, dark: str, mark: str = "", rules: int = 0) -> str:
@@ -314,7 +437,7 @@ def _badge(cx: float, cy: float, r: float, light: str, mid: str, dark: str) -> s
       <circle cx="{cx}" cy="{cy}" r="{r - 1.2}" fill="{mid}"/>
       <path d="M{cx - r + 1.6} {cy - 1} a{r - 1.6} {r - 1.6} 0 0 1 {2 * (r - 1.6)} 0
                a{r - 1.6} {r * 0.7} 0 0 0 -{2 * (r - 1.6)} 0 z"
-            fill="{light}" opacity="0.8"/>
+            fill="{light}" opacity="{_gl(0.8)}"/>
     </g>
     """
 
@@ -438,7 +561,7 @@ def _icon_svg() -> dict[str, str]:
             <g filter="url(#sh)">
               <path d="M9 39.5 L31.5 17 l5.2 5.2 L14.2 44.7 z" fill="url(#blu)"/>
               <path d="M9 39.5 L31.5 17 l2.6 2.6 L11.6 42.1 z" fill="#ffffff"
-                    opacity="0.25"/>
+                    opacity="{_gl(0.25)}"/>
               <path d="M31.5 17 l5.2 5.2 l3.4 -3.4 a3.7 3.7 0 0 0 -5.2 -5.2 z"
                     fill="url(#amb)"/>
             </g>
@@ -494,7 +617,7 @@ def _icon_svg() -> dict[str, str]:
                        c-10.2 -3.9 -17.5 -11.1 -17.5 -22.5 V9.6 z"
                     fill="url(#blu)" stroke="{_P.blue[2]}" stroke-width="1.4"/>
               <path d="M24 3.5 L41.5 9.6 v12.9 c0 4.2 -1 7.8 -2.6 10.9
-                       C33 30 28.7 28.6 24 28.6 z" fill="#ffffff" opacity="0.16"/>
+                       C33 30 28.7 28.6 24 28.6 z" fill="#ffffff" opacity="{_gl(0.16)}"/>
               <path d="M15.5 24 l6.2 6.2 L33.5 17.4" stroke="#ffffff"
                     stroke-width="4.6" fill="none" stroke-linecap="round"
                     stroke-linejoin="round"/>
@@ -527,7 +650,7 @@ def _icon_svg() -> dict[str, str]:
               <rect x="9" y="21.5" width="30" height="20.5" rx="3.2"
                     fill="url(#amb)" stroke="{_P.amber[2]}" stroke-width="1.3"/>
               <rect x="10.4" y="23" width="27.2" height="8" rx="2.4" fill="#ffffff"
-                    opacity="0.3"/>
+                    opacity="{_gl(0.3)}"/>
               <circle cx="24" cy="30.5" r="3.6" fill="{_P.amber[2]}"/>
               <path d="M24 32.5 v6" stroke="{_P.amber[2]}" stroke-width="3.6"
                     stroke-linecap="round"/>
@@ -535,7 +658,7 @@ def _icon_svg() -> dict[str, str]:
             """
         ),
         "key": _wrap(
-            f"""
+            """
             <g filter="url(#sh)">
               <circle cx="15.5" cy="16.5" r="9.5" fill="none" stroke="url(#amb)"
                       stroke-width="5.6"/>
@@ -573,37 +696,51 @@ def _icon_svg() -> dict[str, str]:
         ),
         "file": _wrap(_document()),
         # -- one per kind of file the browser can list --------------------
-        "file-text": _wrap(_typed_file(_P.steel[1], _P.steel[2],
+        #
+        # Every band is mixed out of the *theme's* own palette rather than from
+        # a fixed table of brand colours.  A theme that never touched these
+        # would have a file list stuck in the built-in blues and greens however
+        # far the rest of it had moved, which is exactly where a themed
+        # application stops looking themed.  Where two kinds land on the same
+        # ink they are pushed apart with `deeper`; the marks differ anyway, and
+        # at sixteen pixels the family resemblance is the point.
+        "file-text": _wrap(_typed_file(*_band_ink(_P.steel),
                                        _MARKS["lines"], rules=3)),
-        "file-word": _wrap(_typed_file("#2B5FB8", "#1B3F80", _MARKS["W"],
-                                       rules=3)),
-        "file-excel": _wrap(_typed_file("#1D7044", "#12492C", _MARKS["grid"],
-                                        rules=3)),
-        "file-powerpoint": _wrap(_typed_file("#C4471F", "#8C2F12",
+        "file-word": _wrap(_typed_file(*_band_ink(_P.blue),
+                                       _MARKS["W"], rules=3)),
+        "file-excel": _wrap(_typed_file(*_band_ink(_P.green, 0.3),
+                                        _MARKS["grid"], rules=3)),
+        "file-powerpoint": _wrap(_typed_file(*_band_ink(_P.red, 0.15),
                                              _MARKS["slide"], rules=3)),
-        "file-pdf": _wrap(_typed_file(_P.red[1], _P.red[2], _MARKS["lines"],
-                                      rules=3)),
-        "file-document": _wrap(_typed_file("#7A4BA8", "#53307A",
+        "file-pdf": _wrap(_typed_file(*_band_ink(_P.red, 0.45),
+                                      _MARKS["lines"], rules=3)),
+        "file-document": _wrap(_typed_file(*_band_ink(_P.books[1], 0.2),
                                            _MARKS["lines"], rules=3)),
-        "file-image": _wrap(_typed_file("#B0771C", "#7C5210", _MARKS["image"])),
-        "file-audio": _wrap(_typed_file("#1F7F86", "#125459", _MARKS["note"])),
-        "file-video": _wrap(_typed_file("#8A2D6B", "#5D1B47", _MARKS["play"])),
-        "file-code": _wrap(_typed_file("#2E6F8E", "#1C4A60", _MARKS["code"],
-                                       rules=3)),
-        "file-font": _wrap(_typed_file("#5B5F70", "#3A3D4A", _MARKS["A"])),
-        "file-exec": _wrap(_typed_file("#4A4F5C", "#2C3038",
+        "file-image": _wrap(_typed_file(*_band_ink(_P.amber, 0.35),
+                                        _MARKS["image"])),
+        "file-audio": _wrap(_typed_file(*_band_ink(_P.books[0], 0.3),
+                                        _MARKS["note"])),
+        "file-video": _wrap(_typed_file(*_band_ink(_P.books[1], 0.5),
+                                        _MARKS["play"])),
+        "file-code": _wrap(_typed_file(*_band_ink(_P.blue, 0.45),
+                                       _MARKS["code"], rules=3)),
+        "file-font": _wrap(_typed_file(*_band_ink(_P.steel, 0.45),
+                                       _MARKS["A"])),
+        "file-exec": _wrap(_typed_file(*_band_ink(_P.steel, 0.7),
                                        _MARKS["terminal"])),
-        "file-data": _wrap(_typed_file("#4C6B8A", "#2F455C",
+        "file-data": _wrap(_typed_file(*_band_ink(_P.blue, 0.7),
                                        _MARKS["database"])),
-        "file-disc": _wrap(_typed_file("#6B6F7A", "#43464F", _MARKS["disc"])),
-        "file-key": _wrap(_typed_file("#9A7A17", "#6B540D", _MARKS["key"])),
+        "file-disc": _wrap(_typed_file(*_band_ink(_P.steel, 0.2),
+                                       _MARKS["disc"])),
+        "file-key": _wrap(_typed_file(*_band_ink(_P.amber, 0.6),
+                                      _MARKS["key"])),
         "disk": _wrap(
             f"""
             <g filter="url(#sh)">
               <rect x="4" y="14" width="40" height="21" rx="3.4" fill="url(#stl)"
                     stroke="{_P.steel[2]}" stroke-width="1.2"/>
               <rect x="5.6" y="15.6" width="36.8" height="8" rx="2.6"
-                    fill="#ffffff" opacity="0.4"/>
+                    fill="#ffffff" opacity="{_gl(0.4)}"/>
               <circle cx="37" cy="29" r="3.2" fill="url(#grn)"/>
               <rect x="9" y="26.4" width="16" height="3.2" rx="1.6"
                     fill="{_P.steel[2]}" opacity="0.45"/>
@@ -630,7 +767,7 @@ def _icon_svg() -> dict[str, str]:
               <path d="M24 21.4 V43" fill="none" stroke="{_P.amber[2]}"
                     stroke-width="1.3"/>
               <path d="M7 13.2 L24 5 l17 8.2 L24 21.4 z" fill="#ffffff"
-                    opacity="0.22"/>
+                    opacity="{_gl(0.22)}"/>
             </g>
             """
         ),
@@ -668,7 +805,7 @@ def _icon_svg() -> dict[str, str]:
                     fill="url(#blu)" stroke="{_P.blue[2]}" stroke-width="1.3"
                     stroke-linejoin="round"/>
               <path d="M31.5 5.5 a19 19 0 0 0 -12.6 30 a19 19 0 0 1 12.6 -30 z"
-                    fill="#ffffff" opacity="0.22"/>
+                    fill="#ffffff" opacity="{_gl(0.22)}"/>
             </g>
             <g fill="url(#amb)" filter="url(#sh)">
               <path d="M11 6.5 l1.5 3.5 l3.5 1.5 l-3.5 1.5 l-1.5 3.5 l-1.5 -3.5
@@ -691,7 +828,31 @@ def _icon_svg() -> dict[str, str]:
               <circle cx="24" cy="24" r="10.5" fill="url(#amb)"
                       stroke="{_P.amber[2]}" stroke-width="1.3"/>
               <path d="M24 14.5 a9.5 9.5 0 0 0 -8.2 14.2 a9.5 9.5 0 0 1 8.2 -14.2 z"
-                    fill="#ffffff" opacity="0.45"/>
+                    fill="#ffffff" opacity="{_gl(0.45)}"/>
+            </g>
+            """
+        ),
+        # The theme *manager*, as distinct from theme-light/theme-dark, which
+        # are the two built-ins themselves: a painter's palette, because what
+        # it opens is a choice between many rather than a switch between two.
+        "themes": _wrap(
+            f"""
+            <g filter="url(#sh)">
+              <path d="M21.5 4.5 C10.7 4.5 3.5 12.2 3.5 22.6 C3.5 33 10.9 40.8
+                       21.5 40.8 c3.2 0 4.7 -2 4.7 -3.9 c0 -1.9 -1.4 -3.1 -1.4
+                       -4.9 c0 -2.1 1.8 -3.8 4.1 -3.8 h5.3 c4.6 0 8.3 -3.8 8.3
+                       -8.4 C42.5 10.2 33 4.5 21.5 4.5 z"
+                    fill="url(#pap)" stroke="{_P.paper_edge}" stroke-width="1.5"
+                    stroke-linejoin="round"/>
+              <path d="M21.5 4.5 C10.7 4.5 3.5 12.2 3.5 22.6 c0 1.4 0.1 2.7 0.4
+                       4 C5.6 15.6 12.6 8.2 21.5 8.2 z" fill="#ffffff"
+                    opacity="{_gl(0.45)}"/>
+            </g>
+            <g filter="url(#sh)">
+              <circle cx="13.2" cy="15.4" r="3.6" fill="url(#red)"/>
+              <circle cx="23.4" cy="12.2" r="3.6" fill="url(#amb)"/>
+              <circle cx="32.2" cy="17.4" r="3.6" fill="url(#grn)"/>
+              <circle cx="12.4" cy="26.8" r="3.6" fill="url(#blu)"/>
             </g>
             """
         ),
@@ -731,7 +892,7 @@ def _icon_svg() -> dict[str, str]:
               <path d="M22 20.4 V39.4" fill="none" stroke="{_P.amber[2]}"
                     stroke-width="1.3"/>
               <path d="M7 13.2 L22 6 l15 7.2 L22 20.4 z" fill="#ffffff"
-                    opacity="0.22"/>
+                    opacity="{_gl(0.22)}"/>
             </g>
             """
             + _badge(36, 34, 11.5, _P.red[0], _P.red[1], _P.red[2])
@@ -761,18 +922,178 @@ _BUILDS: dict[str, dict[str, str]] = {}
 
 
 def set_theme(mode: str) -> None:
-    """Serve the build that matches *mode* ("light" or "dark")."""
+    """Serve the build called *mode*: a built-in, or a registered pack."""
     global _MODE
     _MODE = mode if mode in _INKS else "light"
 
 
+def builds() -> list[str]:
+    """Every build that can be asked for."""
+    return list(_INKS)
+
+
+def _ink_overrides(raw: dict, problems: list) -> dict:
+    """Validate a manifest's ``icons`` map against the :class:`Ink` fields.
+
+    Shape matters here in a way it does not for the chrome: ``folder`` is a
+    (light, mid, dark) triple that becomes a gradient and ``books`` is three of
+    those, so a lone colour written where a triple belongs would raise from
+    inside the SVG builder, long after the file that caused it was forgotten.
+    Anything of the wrong shape is reported and dropped instead.
+    """
+    from ..core import themes as loader
+
+    known = {field.name for field in _fields(Ink)}
+    out: dict = {}
+    for key, value in (raw or {}).items():
+        name = str(key)
+        if name not in known:
+            problems.append(loader.unknown_key_problem(
+                "icons", name, known, "the icon set is drawn with"
+            ))
+            continue
+        if name == "books":
+            triples = (
+                value if isinstance(value, list) and len(value) == 3 else None
+            )
+            if triples is None or not all(
+                isinstance(item, list) and len(item) == 3 for item in triples
+            ):
+                problems.append(loader.Problem(
+                    where="icons.books",
+                    found=loader._quote(value),
+                    expected="three [light, mid, dark] triples: the three "
+                             "books in the stack, bottom one first",
+                    fix='write  "books": [["#8FD4CB","#31A99A","#1B7A6E"], '
+                        '["#C89BE0","#9A55BE","#6E2E90"], '
+                        '["#8FC0EE","#3F86CE","#1E5FA4"]]',
+                ))
+                continue
+            out[name] = tuple(
+                tuple(str(shade) for shade in triple) for triple in triples
+            )
+        elif name in _INK_TRIPLES:
+            if not isinstance(value, list) or len(value) != 3:
+                # The example is worked out from whatever they wrote, so it can
+                # be pasted straight in rather than read and translated.
+                seed = value if (isinstance(value, str)
+                                 and value.startswith("#")) else "#F2C14E"
+                try:
+                    shades = [_mix(seed, "#FFFFFF", 0.4), seed,
+                              _mix(seed, "#000000", 0.35)]
+                except (ValueError, IndexError):
+                    shades = ["#FBE09B", "#F2C14E", "#C68F22"]
+                spelled = ", ".join(f'"{shade}"' for shade in shades)
+                problems.append(loader.Problem(
+                    where=f"icons.{name}",
+                    found=loader._quote(value),
+                    expected="three colours: light, middle and dark",
+                    fix=f'"{name}" is a gradient, not one colour: write  '
+                        f'"{name}": [{spelled}]',
+                ))
+                continue
+            out[name] = tuple(str(shade) for shade in value)
+        else:
+            if not isinstance(value, str):
+                problems.append(loader.Problem(
+                    where=f"icons.{name}",
+                    found=loader._quote(value),
+                    expected="one colour",
+                    fix=f'"{name}" is a single colour, not a list: write  '
+                        f'"{name}": "#5A6472"',
+                ))
+                continue
+            out[name] = value
+    return out
+
+
+def register_build(
+    name: str,
+    variant: str = "light",
+    ink: dict | None = None,
+    svg_overrides: dict[str, str] | None = None,
+    problems: list | None = None,
+    style: str = "gloss",
+) -> bool:
+    """Add the icon build a theme pack asks for.
+
+    *variant* names the built-in Ink it starts from, so a manifest only has to
+    say what it re-tunes, and *style* says how the shapes are drawn.  Returns
+    whether the build was added; the two built-in names are reserved and are
+    refused.
+    """
+    if name in BUILTIN_BUILDS or not name:
+        return False
+    complaints = problems if problems is not None else []
+    base = _INKS[variant if variant in BUILTIN_BUILDS else "light"]
+    try:
+        _INKS[name] = replace(base, **_ink_overrides(ink or {}, complaints))
+    except (TypeError, ValueError) as error:   # pragma: no cover - defensive
+        from ..core import themes as loader
+
+        complaints.append(loader.Problem(
+            where="icons", found=str(error),
+            expected="colours the icon set can be drawn with",
+            fix='check the shapes: a name like "folder" wants three colours, '
+                'and "books" wants three of those.',
+        ))
+        _INKS[name] = base
+    _STYLES[name] = style if style in STYLES else "gloss"
+    _SVG_OVERRIDES[name] = dict(svg_overrides or {})
+    _forget(name)
+    return True
+
+
+def forget_builds() -> None:
+    """Drop every registered pack build, before a rescan puts them back.
+
+    ``_MODE`` is left pointing wherever it pointed: :func:`_set` falls back to
+    the light build for a name it does not know, and the rescan that called
+    this is about to re-register the name anyway.
+    """
+    for name in [n for n in _INKS if n not in BUILTIN_BUILDS]:
+        del _INKS[name]
+        _STYLES.pop(name, None)
+        _SVG_OVERRIDES.pop(name, None)
+        _forget(name)
+
+
+def style_of(build: str) -> str:
+    """How a build is drawn: one of :data:`STYLES`."""
+    return _STYLES.get(build, "gloss")
+
+
+def _forget(name: str) -> None:
+    """Throw away anything already drawn for a build that has just changed."""
+    if _BUILDS.pop(name, None) is None:
+        # Nothing was ever drawn under this name, so nothing is cached under it
+        # either: _set() fills _BUILDS the first time a glyph is asked for.
+        # Registering the themes at start-up therefore costs no cache at all.
+        return
+    # The two render caches are keyed by build name but cannot be evicted by
+    # key, so a theme that really did change costs the whole cache.  It refills
+    # on demand, and only a rescan gets here.
+    _render.cache_clear()
+    _icon.cache_clear()
+
+
 def _set(mode: str) -> dict[str, str]:
     """The icon table for *mode*, built once and kept."""
-    global _P
+    global _P, _S
+    if mode not in _INKS:
+        mode = "light"
     if mode not in _BUILDS:
+        previous, previous_style = _P, _S
         _P = _INKS[mode]
-        _BUILDS[mode] = _icon_svg()
-        _P = _INKS[_MODE]
+        _S = _STYLES.get(mode, "gloss")
+        try:
+            table = _icon_svg()
+        finally:
+            _P, _S = previous, previous_style
+        # A pack's own artwork replaces the drawn glyph of the same name, and
+        # may also add names of its own -- harmless, since nothing asks for one.
+        table.update(_SVG_OVERRIDES.get(mode, {}))
+        _BUILDS[mode] = table
     return _BUILDS[mode]
 
 
@@ -809,6 +1130,19 @@ def icon(name: str) -> QIcon:
 
 def pixmap(name: str, size: int = 32) -> QPixmap:
     return _render(_MODE, name, size)
+
+
+def icon_for(build: str, name: str) -> QIcon:
+    """*name* from a named build rather than the active one.
+
+    What the Theme Manager previews with: it has to show a theme's icons
+    without making that theme the one the rest of the window is using.
+    """
+    return _icon(build if build in _INKS else _MODE, name)
+
+
+def pixmap_for(build: str, name: str, size: int = 32) -> QPixmap:
+    return _render(build if build in _INKS else _MODE, name, size)
 
 
 def names() -> list[str]:

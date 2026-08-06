@@ -2,7 +2,8 @@
 <defs>
   
 <filter id="sh" x="-30%" y="-30%" width="170%" height="170%">
-  <feDropShadow dx="0" dy="1.1" stdDeviation="1.1"
+  <feDropShadow dx="0" dy="1.1"
+                stdDeviation="1.1"
                 flood-color="#101820"
                 flood-opacity="0.38"/>
 </filter>

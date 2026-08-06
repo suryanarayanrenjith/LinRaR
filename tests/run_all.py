@@ -28,6 +28,7 @@ ORDER = [
     "test_filetypes.py",
     "test_parsing.py",
     "test_theme.py",
+    "test_themes.py",
     "test_customize.py",
     "test_persistence.py",
     "test_config.py",
@@ -49,7 +50,7 @@ ORDER = [
 
 #: Seconds any one file may take before it is killed and reported as a
 #: failure.  Nothing here takes more than about five, so this only ever fires
-#: on a genuine hang — and a hang is what a GUI test does when it opens a
+#: on a genuine hang, and a hang is what a GUI test does when it opens a
 #: modal dialog that, offscreen, nobody can ever answer.  Without this the
 #: whole run simply stops, which on CI means a job that sits there until the
 #: runner's own limit kills it with no idea which file was to blame.
@@ -86,7 +87,7 @@ def _text(raw) -> str:
 
 
 def available(tool: str) -> bool:
-    """Is *tool* usable — asked the same way the application asks it.
+    """Is *tool* usable: asked the same way the application asks it.
 
     LinRAR looks past PATH into the places distributions and manual installs
     use, so the tests must agree with it or they would skip work that would
@@ -155,7 +156,7 @@ def main(argv: list[str]) -> int:
                 returncode=124,
                 stdout=_text(expired.stdout),
                 stderr=_text(expired.stderr)
-                + f"\n[timed out after {TIMEOUT}s — killed]\n"
+                + f"\n[timed out after {TIMEOUT}s: killed]\n"
                 + "The last check printed above is the one before the hang. "
                 "A GUI test that opens a modal dialog offscreen waits for an "
                 "answer that can never come.",
@@ -173,7 +174,7 @@ def main(argv: list[str]) -> int:
             failed += int(counts[1])
             ran_checks = int(counts[0]) + int(counts[1])
         if result.returncode == 0 and ran_checks == 0:
-            # A file that stepped aside — no AppImage runtime to build with,
+            # A file that stepped aside: no AppImage runtime to build with,
             # say.  It is not a failure, but printing it as "ok" makes doing
             # nothing look exactly like verifying everything, and that is how a
             # file quietly stops testing anything without anybody noticing.
@@ -191,7 +192,7 @@ def main(argv: list[str]) -> int:
             state = "TIMED OUT" if timed_out else (summary or "crashed")
             print(f"{RED}FAIL{OFF}  {state}  {DIM}{seconds:.1f}s{OFF}")
             output = (result.stdout + result.stderr).strip()
-            # The failed checks first — a tail alone hides them when the file
+            # The failed checks first: a tail alone hides them when the file
             # keeps going, which is exactly when you need to see them.
             failures = [
                 line for line in output.splitlines() if line.startswith("FAIL")

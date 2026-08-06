@@ -155,7 +155,7 @@ os.makedirs(sealed_src)
 open(f"{sealed_src}/payload.txt", "w").write("top secret")
 # The archive lives alone in its own folder: "extract here" unpacks beside it,
 # and a file already sitting there would raise the *conflict* dialog, which is
-# every bit as modal — and as unanswerable offscreen — as the password one.
+# every bit as modal, and as unanswerable offscreen, as the password one.
 sealed_dir = os.path.join(root, "sealed-dir")
 os.makedirs(sealed_dir)
 sealed = f"{sealed_dir}/sealed.rar"

@@ -1,6 +1,6 @@
 """Find: the name mask, and the text search behind the "Text to find" box.
 
-The text box existed long before anything read it — the dialog collected the
+The text box existed long before anything read it: the dialog collected the
 string and the window filtered on the *name* mask alone, so typing text and
 pressing Find quietly did nothing.  These checks cover the search that now
 stands behind it, on disk and inside an archive, plus the results window.
@@ -91,7 +91,7 @@ check("and the line itself",
       [m.line for m in found.matches])
 check("dot directories are left alone",
       not any(".hidden" in m.name for m in found.matches), names)
-check("the count of files read is reported — including the ones with no hit",
+check("the count of files read is reported, including the ones with no hit",
       found.searched == 4, found.searched)
 
 shallow = search.search_folder(

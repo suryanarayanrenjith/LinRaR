@@ -698,7 +698,7 @@ class ArchiveDialog(QDialog):
         self.advanced_password_state.setText(state or "No password set")
 
     def _show_profiles(self) -> None:
-        from ...core.profiles import PROFILES, Profile
+        from ...core.profiles import PROFILES
         from .tools import ProfileDialog
 
         menu = QMenu(self)
@@ -774,10 +774,10 @@ class ArchiveDialog(QDialog):
             "Archive name and parameters\n\n"
             "Choose the archive name, format and compression level, then press "
             "OK to start archiving.\n\n"
-            "• RAR gives the best compression and supports recovery "
+            "- RAR gives the best compression and supports recovery "
             "records, solid archives and encrypted file names.\n"
-            "• ZIP is the most portable format.\n"
-            "• Split to volumes to spread a large archive over several "
+            "- ZIP is the most portable format.\n"
+            "- Split to volumes to spread a large archive over several "
             "files.",
         )
 

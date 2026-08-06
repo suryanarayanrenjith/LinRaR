@@ -365,7 +365,7 @@ def _structural_problem(facts: FileFacts) -> Optional[Problem]:
         return Problem(
             kind="missing",
             title="File not found",
-            headline=f"There is no file called “{name}” here.",
+            headline=f"There is no file called '{name}' here.",
             explanation=(
                 "It may have been moved, renamed or deleted since the folder "
                 "was last listed, or the drive it lives on may no longer be "
@@ -384,9 +384,9 @@ def _structural_problem(facts: FileFacts) -> Optional[Problem]:
         return Problem(
             kind="broken-link",
             title="Broken link",
-            headline=f"“{name}” is a link that points nowhere.",
+            headline=f"'{name}' is a link that points nowhere.",
             explanation=(
-                f"The link leads to “{facts.link_target}”, and there is "
+                f"The link leads to '{facts.link_target}', and there is "
                 "nothing there. Whatever it pointed at has been moved or "
                 "deleted."
             ),
@@ -401,7 +401,7 @@ def _structural_problem(facts: FileFacts) -> Optional[Problem]:
         return Problem(
             kind="directory",
             title="That is a folder",
-            headline=f"“{name}” is a folder, not an archive.",
+            headline=f"'{name}' is a folder, not an archive.",
             explanation=(
                 "LinRAR browses folders rather than opening them: press Enter "
                 "or double-click to step inside."
@@ -416,7 +416,7 @@ def _structural_problem(facts: FileFacts) -> Optional[Problem]:
         return Problem(
             kind="not-a-file",
             title="Not a file",
-            headline=f"“{name}” is {_KIND_LABELS.get(facts.kind, facts.kind)}.",
+            headline=f"'{name}' is {_KIND_LABELS.get(facts.kind, facts.kind)}.",
             explanation=(
                 "It is not a regular file, so there is nothing in it to read "
                 "as an archive. Devices, sockets and pipes only look like "
@@ -437,7 +437,7 @@ def _structural_problem(facts: FileFacts) -> Optional[Problem]:
         return Problem(
             kind="permission",
             title="Permission denied",
-            headline=f"You do not have permission to read “{name}”.",
+            headline=f"You do not have permission to read '{name}'.",
             explanation=(
                 "The file exists, but its permissions do not let this user "
                 "open it"
@@ -454,7 +454,7 @@ def _structural_problem(facts: FileFacts) -> Optional[Problem]:
         return Problem(
             kind="empty",
             title="Empty file",
-            headline=f"“{name}” is empty.",
+            headline=f"'{name}' is empty.",
             explanation=(
                 "The file is zero bytes long, so there is nothing in it at "
                 "all. That usually means a download or a copy was interrupted "
@@ -481,18 +481,18 @@ def _archive_problem(
         return Problem(
             kind="volume",
             title="Part of a multi-volume archive",
-            headline=f"“{name}” is part {facts.volume} of a split archive.",
+            headline=f"'{name}' is part {facts.volume} of a split archive.",
             explanation=(
                 "A split archive is opened through its first volume, which "
                 "carries the index of everything in the set. The other parts "
                 "hold data only and cannot be opened on their own."
-                + (f"\n\nThe first volume is “{target}”, in the same folder."
+                + (f"\n\nThe first volume is '{target}', in the same folder."
                    if target else
                    "\n\nThe first volume is not in this folder, so the set is "
                    "incomplete.")
             ),
             suggestions=(
-                [f"Open “{target}” instead."] if target else
+                [f"Open '{target}' instead."] if target else
                 ["Find the first volume of the set and open that one.",
                  "Every part of the set must be in the same folder."]
             ),
@@ -506,7 +506,7 @@ def _archive_problem(
             kind="no-tool",
             title="A tool is missing",
             headline=(
-                f"“{name}” is {_article(facts.format.label)} archive, and the "
+                f"'{name}' is {_article(facts.format.label)} archive, and the "
                 f"'{facts.tool}' command that opens it is not installed."
             ),
             explanation=(
@@ -541,7 +541,7 @@ def _archive_problem(
         )
         if misleading:
             explanation += (
-                f"The name ends in “{facts.extension}”, but the contents do "
+                f"The name ends in '{facts.extension}', but the contents do "
                 "not match, so the file has been renamed, is a different kind "
                 "of file altogether, or was damaged in transit."
             )
@@ -565,7 +565,7 @@ def _archive_problem(
         return Problem(
             kind="not-archive",
             title="Not an archive",
-            headline=f"“{name}” is not an archive LinRAR can open.",
+            headline=f"'{name}' is not an archive LinRAR can open.",
             explanation=explanation,
             suggestions=suggestions,
             actions=[ACTION_VIEW, ACTION_OPEN_EXTERNAL],
@@ -583,7 +583,7 @@ def _backend_failure(facts: FileFacts, error: Optional[BaseException]) -> Proble
         return Problem(
             kind="password",
             title="Password required",
-            headline=f"“{name}” is encrypted.",
+            headline=f"'{name}' is encrypted.",
             explanation=(
                 "The archive's file names are encrypted too, so nothing in it "
                 "can be listed until the right password is given."
@@ -623,7 +623,7 @@ def _backend_failure(facts: FileFacts, error: Optional[BaseException]) -> Proble
     return Problem(
         kind="damaged",
         title="The archive could not be read",
-        headline=f"“{name}” could not be read.",
+        headline=f"'{name}' could not be read.",
         explanation=explanation,
         suggestions=suggestions,
         actions=[ACTION_REPAIR] if facts.format in (
@@ -696,7 +696,7 @@ def describe_folder(path: str) -> Problem:
         return Problem(
             kind="missing",
             title="Folder not found",
-            headline=f"The folder “{name}” no longer exists.",
+            headline=f"The folder '{name}' no longer exists.",
             explanation=(
                 f"Nothing is at {path} any more. It may have been renamed or "
                 "deleted, or it may be on a drive that is no longer mounted."
@@ -715,7 +715,7 @@ def describe_folder(path: str) -> Problem:
         return Problem(
             kind="not-a-folder",
             title="Not a folder",
-            headline=f"“{name}” is not a folder.",
+            headline=f"'{name}' is not a folder.",
             explanation=(
                 f"It is {_KIND_LABELS.get(facts.kind, facts.kind)}, so there "
                 "is nothing in it to list."
@@ -729,7 +729,7 @@ def describe_folder(path: str) -> Problem:
     return Problem(
         kind="permission",
         title="Permission denied",
-        headline=f"You do not have permission to open “{name}”.",
+        headline=f"You do not have permission to open '{name}'.",
         explanation=(
             "The folder exists, but this user may not list it. Opening a "
             "folder needs both read and execute permission on it."
@@ -752,7 +752,7 @@ def describe_no_handler(path: str) -> Problem:
     return Problem(
         kind="no-handler",
         title="Nothing opened it",
-        headline=f"Nothing on this system opens “{name}”.",
+        headline=f"Nothing on this system opens '{name}'.",
         explanation=(
             f"LinRAR handed the file to the desktop, which has no application "
             f"registered for it. The file itself is fine: it is {what}"

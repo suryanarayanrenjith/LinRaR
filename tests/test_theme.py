@@ -70,17 +70,20 @@ theme.apply(app, "light")
 win = MainWindow()
 win.navigate_to(work)
 check("starts light", theme.mode() == "light")
-win.toggle_theme()
-check("toggled to dark", theme.mode() == "dark")
+win.set_theme("dark")
+check("switched to dark", theme.mode() == "dark")
 check("setting saved", SETTINGS.get("view/theme") == "dark")
-check("menu check follows", win.theme_actions["dark"].isChecked()
-      and not win.theme_actions["light"].isChecked())
-check("toolbar switch offers the other one",
-      "light" in win.act_toggle_theme.text().lower())
+# One button, one place: there is no light/dark switch and no per-theme menu.
+check("one Themes button and nothing else",
+      not hasattr(win, "act_toggle_theme")
+      and not hasattr(win, "theme_actions")
+      and win.menuBar().cornerWidget().defaultAction() is win.act_themes)
+check("and it says which theme is in use",
+      "Dark" in win.act_themes.toolTip(), win.act_themes.toolTip())
 check("listing survives", [i.name for i in win.model.items if not i.is_parent]
       == ["a.txt"])
 win.set_theme("light")
-check("toggled back", theme.mode() == "light")
+check("switched back", theme.mode() == "light")
 check("bad mode falls back", (win.set_theme("nonsense"), theme.mode())[1] == "light")
 
 print("== help and about")

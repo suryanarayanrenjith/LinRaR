@@ -23,7 +23,7 @@ LinRAR opens as a file manager. Double-click an archive to step *inside* it and
 the window becomes an archive browser; the `..` row steps back out. The folder
 tree on the left follows whichever of the two you are looking at.
 
-**Getting around.** `Alt+←` and `Alt+→` are Back and Forward, over folders and
+**Getting around.** `Alt+Left` and `Alt+Right` are Back and Forward, over folders and
 archives alike, and their tooltips name where they lead. `Backspace` goes up,
 `Ctrl+L` puts the cursor in the address bar so you can type a path (`~`, `$HOME`
 and relative paths all work), `Ctrl+G` opens a folder chooser, and `F5` re-lists
@@ -34,14 +34,14 @@ stepping out of a folder leaves the cursor **on** that folder; coming back to a
 folder puts the cursor back where it was; and the folder tree keeps every
 branch you opened, because it is revealed rather than rebuilt.
 
-Five views, from **Options → File list** or `Ctrl+1`…`Ctrl+5`: Details, List,
-Small icons, Large icons, Tiles. Click a column header to sort — the choice is
+Five views, from **Options > File list** or `Ctrl+1` to `Ctrl+5`: Details, List,
+Small icons, Large icons, Tiles. Click a column header to sort; the choice is
 remembered, as are the column widths and which columns are shown.
 
 ## Opening files that are not archives
 
 Every file in the list is identified: the **Type** column names it and the icon
-draws it — Word, Excel and PowerPoint documents, PDFs, images, audio, video,
+draws it: Word, Excel and PowerPoint documents, PDFs, images, audio, video,
 source code, fonts, programs, databases, disc images and keys each have their
 own. A file with no extension at all is identified from its first bytes, so a
 compiled program says so rather than reading as "File". Selecting one names it
@@ -56,14 +56,14 @@ bytes:
 |---|---|
 | Text, source, JSON, XML, CSV, logs | the text, in whatever encoding it turns out to be |
 | PNG, JPEG, GIF, BMP, WebP and friends | the image, scaled to fit |
-| **Word, PowerPoint, Excel** (`.docx`, `.pptx`, `.xlsx`) | the document's **text** — paragraphs, slides, and cells as rows |
+| **Word, PowerPoint, Excel** (`.docx`, `.pptx`, `.xlsx`) | the document's **text**: paragraphs, slides, and cells as rows |
 | **OpenDocument and EPUB** (`.odt`, `.ods`, `.odp`, `.epub`) | the same |
 | PDF | LinRAR does not render pages; **Open with...** hands it to your reader |
 | An archive | an offer to **Open in LinRAR** |
 | Anything else | its bytes as a hex dump, with the file *named* above it and **Open with...** beside it |
 
 **View as hex** switches to the raw bytes at any point, and **Save a copy...**
-writes the file out — useful for a member of an archive you only wanted one
+writes the file out: useful for a member of an archive you only wanted one
 file from.
 
 Documents are shown as plain text: no formatting, no images, no layout. It is
@@ -73,45 +73,45 @@ thing.
 ### Documents that are secretly archives
 
 `.docx`, `.xlsx`, `.pptx`, `.odt`, `.epub` and their relations are ZIP archives
-— genuinely, byte for byte. LinRAR can open them as archives, and does when you
+genuinely, byte for byte. LinRAR can open them as archives, and does when you
 ask:
 
 - **double-click** opens the document in the application that owns it;
-- **right-click → Open as archive** opens the ZIP, so you can pull an image out
+- **right-click > Open as archive** opens the ZIP, so you can pull an image out
   of a slide deck or look at the XML.
 
 Installing LinRAR does not make it the handler for these, or for `.jar`,
-`.apk`, `.deb`, `.rpm` or `.epub`. It offers itself for all of them — they
-appear in "Open with" — and takes over only the formats whose whole purpose is
+`.apk`, `.deb`, `.rpm` or `.epub`. It offers itself for all of them, they
+appear in "Open with", and takes over only the formats whose whole purpose is
 to be unpacked.
 
 ## When something will not open
 
 Archives are recognised by their **contents**, not their names, so a file opens
-whatever it is called — and a `.rar` that is really an HTML error page is
+whatever it is called, and a `.rar` that is really an HTML error page is
 reported as one rather than as a broken archive.
 
 When a file cannot be opened, LinRAR does not shrug. It shows what it found:
 
-- what the file is — regular file, folder, device, dangling link — its size,
+- what the file is, regular file, folder, device, dangling link, its size,
   when it changed, and whether it can be read at all;
-- what its contents say it is (plain text, a PDF, an ELF binary, an image…)
+- what its contents say it is (plain text, a PDF, an ELF binary, an image...)
   next to what its name claimed;
 - which tool is needed to read that format, and whether it is installed;
 - whether it is a later part of a split archive, and where the first part is;
 - a hex dump of the first bytes, the tool's exit code and its own words, all
   under **Show details** and on **Copy report** for a bug report.
 
-Below that are the things you can do about it, as buttons: *Install tools…*
+Below that are the things you can do about it, as buttons: *Install tools...*
 when a tool is missing, *Open volume 1* for a split set, *View in LinRAR*,
-*Open with another application*, *Repair…*, or somewhere else to go when a
+*Open with another application*, *Repair...*, or somewhere else to go when a
 folder has vanished. Double-clicking an ordinary file hands it to the desktop;
 if nothing takes it, that is explained too rather than silently doing nothing.
 
 The same report is available from the terminal with `linrar -i FILE`.
 
 **Formats.** RAR5, RAR4, ZIP, 7z, TAR, GZip, BZip2, XZ, Zstandard, ISO and CAB,
-plus — wherever 7-Zip is installed — `.deb`, `.rpm`, `.cpio`, `.ar`/`.a`,
+plus, wherever 7-Zip is installed, `.deb`, `.rpm`, `.cpio`, `.ar`/`.a`,
 `.wim`, `.msi`, `.dmg`, `.squashfs`/`.snap`, `.lzma`, `.lz`, `.lz4`, `.arj`,
 `.lzh` and `.Z`. Everything past ZIP, RAR and 7z is read-only.
 
@@ -130,23 +130,23 @@ plus — wherever 7-Zip is installed — `.deb`, `.rpm`, `.cpio`, `.ar`/`.a`,
 
 Select files and press **Add** (`Alt+A`).
 
-- **Format** — RAR5, RAR4, ZIP or 7z. Options that only apply to one format
+- **Format**: RAR5, RAR4, ZIP or 7z. Options that only apply to one format
   grey out on their own.
-- **Compression** — Store, Fastest, Fast, Normal, Good, Best, with the
+- **Compression**: Store, Fastest, Fast, Normal, Good, Best, with the
   dictionary sizes each supports.
-- **Split to volumes** — a plain number uses the unit beside it, or write the
+- **Split to volumes**; a plain number uses the unit beside it, or write the
   unit in the box (`700 MB`). The classic media sizes are presets.
-- **Archiving options** — delete after archiving, self-extracting, solid,
+- **Archiving options**: delete after archiving, self-extracting, solid,
   recovery record, test after, lock.
-- **Create SFX archive** — tick the box and pick the kind from the list beside
-  it: **AppImage** or **RAR .sfx stub**. **Options…** opens the full SFX
+- **Create SFX archive**: tick the box and pick the kind from the list beside
+  it: **AppImage** or **RAR .sfx stub**. **Options...** opens the full SFX
   module. The archive name follows your choice (`.AppImage` or `.sfx`), and
   an AppImage greys out volume splitting because it is a single file. See
   [Self-extracting archives](#self-extracting-archives).
-- **Profiles** — save the whole set of choices under a name and reuse it. Six
+- **Profiles**: save the whole set of choices under a name and reuse it. Six
   come built in.
-- **Options tab** — include subfolders, store full paths, exclusion masks.
-- **Comment tab** — text stored inside the archive.
+- **Options tab**: include subfolders, store full paths, exclusion masks.
+- **Comment tab**: text stored inside the archive.
 
 Whatever you used last time is what the dialog opens with next time.
 
@@ -157,28 +157,28 @@ and history, update mode, overwrite mode, extract to subfolders, keep broken
 files, and full-paths / no-paths. **Alt+W** unpacks straight into the current
 folder.
 
-With *Ask before overwrite* — the default — conflicts are collected before any
+With *Ask before overwrite*, the default, conflicts are collected before any
 work starts and shown in one prompt with **Yes / Yes to All / No / No to All /
 Rename**.
 
 **Extracting never moves you.** Unpacking an archive from the file list, from
 the right-click menu or from the command line leaves the browser exactly where
 it is: LinRAR reads the archive, shows the progress window, and puts the files
-beside it — it does not open the archive in the background first. The listing
+beside it; it does not open the archive in the background first. The listing
 refreshes when it is done, so the new files appear where you are looking.
 
 ### The progress window
 
 Two bars, as in WinRAR, and they do not move together:
 
-- **Current file** — how far through the file named above it.
-- **Total** — how far through the whole job, **weighted by bytes**. Thirty
+- **Current file**: how far through the file named above it.
+- **Total**: how far through the whole job, **weighted by bytes**. Thirty
   small files followed by one large one is not "almost done" after the small
   ones, and the bar says so.
 
 Beside them: elapsed time, time left, bytes processed of the total, the file
-count (`14 of 38`), the current speed, and — while an archive is being
-written — how far it has been compressed. The percentage is in the window
+count (`14 of 38`), the current speed, and, while an archive is being
+written, how far it has been compressed. The percentage is in the window
 title, so the taskbar carries it when the window is behind something else.
 **Background** hands the job off and reports when it finishes; **Cancel**
 stops it.
@@ -209,20 +209,20 @@ LinRAR offers both wherever a self-extracting archive can be made:
 
 **Making one while archiving.** In the *Archive name and parameters* dialog,
 tick **Create SFX archive** and pick the kind from the list beside it. The
-archive name follows the choice, **Options…** opens the AppImage settings, and
-one press of OK compresses *and* wraps — there is no intermediate `.rar` to
+archive name follows the choice, **Options...** opens the AppImage settings, and
+one press of OK compresses *and* wraps; there is no intermediate `.rar` to
 tidy up afterwards.
 
-**Converting one that already exists.** **Commands → Convert archive to SFX**
+**Converting one that already exists.** **Commands > Convert archive to SFX**
 (`Alt+S`) asks which of the two you want, and explains the difference.
 
-Only the AppImage has anything to configure — destination, licence, icon, what
-runs afterwards — so it is the only one with an options window. The `.sfx` stub
+Only the AppImage has anything to configure, destination, licence, icon, what
+runs afterwards, so it is the only one with an options window. The `.sfx` stub
 is a small shell script that takes no options at all, and choosing it goes
 straight to building the file.
 
 ```bash
-./MyArchive.AppImage                    # GUI: license → destination → extract
+./MyArchive.AppImage                    # GUI: license, destination, extract
 ./MyArchive.AppImage --list             # list contents
 ./MyArchive.AppImage --test             # verify integrity
 ./MyArchive.AppImage -d ~/here --silent # unattended
@@ -240,28 +240,93 @@ selected.
 
 ## Themes and customization
 
-**Theme** — light or dark, drawn by LinRAR rather than inherited from the
-desktop, with a matching build of the icon set. **Options → Theme**, the switch
-in the menu bar's corner, or `Ctrl+Shift+T`.
+**One button changes how LinRAR looks.** The palette in the menu bar's corner,
+**Options > Themes...**, or `Ctrl+Shift+M`: all three open the theme manager,
+and there is nothing else to find. (Customize can put it on the toolbar too, if
+you would rather have it there.) It lists the two themes drawn into LinRAR
+itself, and every one you have installed.
 
-**Options → Customize** (`Ctrl+U`) has three tabs:
+Selecting one shows a working miniature of the window in that theme, beside the
+one you are still using, so **Apply** never comes as a surprise; **Cancel** puts
+back what was there.
 
-- **Toolbar** — pick from 34 commands, drag them into any order, insert
+A theme changes everything the built-ins do: every surface, edge and gradient,
+the corner radii (Classic Silver is hard-square, Sakura Blossom is round), the
+font, and **all thirty-nine icons**, which are redrawn in the theme's colours
+and in its chosen style; `gloss` is the built-in 3D look, `flat` has no
+gradients or shadows at all, `neon` lights the glyphs from inside, `soft` takes
+the shine down. A theme may also carry real artwork of its own for individual
+glyphs, and add style sheet rules on top; the ten on the website do both.
+
+### Adding a theme
+
+**Drag it onto the Themes window**, a folder or a file, however many at once,
+or drop it straight into the themes folder, which the window names and **Open
+themes folder** opens. **Install theme file...** does the same through a file
+chooser. Anything in that folder that could be a theme is treated as one:
+
+| what you have | what to do |
+|---|---|
+| a theme folder | drop it in |
+| a zip that unpacked into a folder inside a folder | drop it in; the manifest is found either way |
+| `something.linrar-theme`, `.theme`, `.zip` or `.json` | drop it in; a zip is read in place, unpacked or not |
+
+**A theme that will not load is shown, not hidden.** It appears under *needs
+fixing* with what is wrong, what belongs there and a line of JSON to paste
+instead, including a "did you mean" for a misspelled colour name. A theme with
+mistakes in it still loads, uses the parts that were right, and lists the rest
+under its preview; **Copy report** puts the lot on the clipboard. Press
+**Rescan** after editing one by hand.
+
+Nothing in a theme is ever executed, and an archive holding an absolute path, a
+`..`, a symbolic link or an implausibly large file is refused outright.
+
+**Ten more are at <https://linrar.vercel.app/themes>**, ready to download and
+drop in, and <https://linrar.vercel.app/create> is a builder: pick a dozen
+colours, it derives the other eighty, draws the icons, tells you if anything came
+out unreadable, and hands you the file. Where themes live and how to write one by
+hand is [docs/THEMES.md](THEMES.md).
+
+<table>
+<tr>
+<td width="50%" valign="top"><img src="images/main-light.png" alt="The light theme"></td>
+<td width="50%" valign="top"><img src="images/main-dark.png" alt="The dark theme"></td>
+</tr>
+<tr>
+<td align="center" valign="top"><em>The two themes drawn into LinRAR itself</em></td>
+<td align="center" valign="top"><em>Same window, same icons, re-tuned</em></td>
+</tr>
+</table>
+
+<table>
+<tr>
+<td width="58%" valign="top"><img src="images/themes.png" alt="The Themes window"></td>
+<td width="42%" valign="top"><img src="images/themes-fixing.png" alt="A theme that needs fixing"></td>
+</tr>
+<tr>
+<td align="center" valign="top"><em>Every theme previewed before you apply it</em></td>
+<td align="center" valign="top"><em>And one that will not load, with the fix</em></td>
+</tr>
+</table>
+
+**Options > Customize** (`Ctrl+U`) has three tabs:
+
+- **Toolbar**: pick from 38 commands, drag them into any order, insert
   separators, choose the icon size (16/24/32/48) and whether captions sit under
   the icon, beside it, or not at all.
-- **File list** — the five views, row height, row separators, alternating
+- **File list**: the five views, row height, row separators, alternating
   shading, and which columns Details shows.
-- **Layout** — toolbar at the top or bottom, address bar and status bar on or
+- **Layout**: toolbar at the top or bottom, address bar and status bar on or
   off, folder tree on the left or right, comment pane above or below.
 
-**Options → Layout → Reset the interface** puts all of it back.
+**Options > Layout > Reset the interface** puts all of it back.
 
 ## Finding things
 
 `Ctrl+F` asks for two things, and what you fill in decides what happens.
 
-A **file name mask** on its own filters the list in place — `*.log`, `report*`
-— in the current folder or in the open archive. `F5` clears it.
+A **file name mask** on its own filters the list in place, `*.log`, `report*`
+in the current folder or in the open archive. `F5` clears it.
 
 Add some **text** and LinRAR reads the files themselves: through the current
 folder and everything under it (or the whole of the open archive) and lists
@@ -273,8 +338,8 @@ scratch folder is removed afterwards.
 
 ## Checksums
 
-`Ctrl+K`, or **Tools → Calculate checksums**, works out CRC32, MD5, SHA-1,
-SHA-256 and SHA-512 for whatever is selected — files on disk, or members of an
+`Ctrl+K`, or **Tools > Calculate checksums**, works out CRC32, MD5, SHA-1,
+SHA-256 and SHA-512 for whatever is selected: files on disk, or members of an
 open archive, which are unpacked first. All five come from one pass over the
 bytes, so asking for them all costs no more than asking for one.
 
@@ -289,8 +354,8 @@ Set one for a single operation from the dialog that needs it, or a default for
 the session with `Ctrl+P`. Tick **Remember this password** on the prompt and
 it is saved for next time.
 
-**Tools → Organize passwords** manages them. Each carries a file-name mask —
-`backup*.rar`, or `*` for any archive — and when an archive asks for a
+**Tools > Organize passwords** manages them. Each carries a file-name mask,
+`backup*.rar`, or `*` for any archive, and when an archive asks for a
 password LinRAR tries every saved one whose mask fits, most specific first,
 before it asks you. The status bar says when one was used.
 
@@ -304,7 +369,7 @@ line, so they never appear in the process list.
 ## Dragging files
 
 Files can be dragged out of the list into any file manager, including out of
-an **open archive** — they are unpacked on the way, and a selected folder
+an **open archive**; they are unpacked on the way, and a selected folder
 arrives as a folder. Very large selections are refused with a pointer to
 Extract, which has a progress window and a Cancel.
 
@@ -355,7 +420,7 @@ opening a window, with status **1**.
 | | |
 |---|---|
 | `Alt+A` | add to archive |
-| `Alt+E` / `Alt+W` | extract to… / extract here |
+| `Alt+E` / `Alt+W` | extract to... / extract here |
 | `Alt+T` | test |
 | `Alt+V` | view file |
 | `Alt+I` | archive information |
@@ -367,7 +432,7 @@ opening a window, with status **1**.
 | `Ctrl+K` | calculate checksums |
 | `Del` / `F2` / `F7` | delete / rename / new folder |
 | `Ctrl+O` / `Ctrl+W` | open / close archive |
-| `Alt+←` / `Alt+→` | back / forward |
+| `Alt+Left` / `Alt+Right` | back / forward |
 | `Backspace` / `F5` | up one level / refresh and clear the filter |
 | `Ctrl+L` / `Ctrl+G` | address bar / go to folder |
 | `Ctrl+F` | find |
@@ -375,17 +440,17 @@ opening a window, with status **1**.
 | `Ctrl+C` `Ctrl+X` `Ctrl+V` | copy, cut, paste |
 | `Ctrl+Shift+C` | copy path |
 | `Alt+Enter` | properties |
-| `Ctrl+1`…`Ctrl+5` | Details, List, Small icons, Large icons, Tiles |
+| `Ctrl+1` to `Ctrl+5` | Details, List, Small icons, Large icons, Tiles |
 | `Ctrl+T` / `Ctrl+H` | folder tree / hidden files |
 | `Ctrl+U` | customize |
-| `Ctrl+Shift+T` | switch theme |
+| `Ctrl+Shift+M` | themes |
 | `Ctrl+P` / `Ctrl+S` / `Ctrl+D` | default password / settings / add to favourites |
 | `F1` / `Shift+F1` | help / keyboard shortcuts |
 | `Ctrl+Q` | quit |
 
 ## Keeping LinRAR up to date
 
-**Help → Check for updates…** asks whether a newer version has been released.
+**Help > Check for updates...** asks whether a newer version has been released.
 Nothing is sent anywhere: it fetches one small file describing the newest
 release and compares the version with yours.
 
@@ -404,13 +469,13 @@ through seven stages, each ticked off as it passes:
 | Finished | starts the new version in a fresh process, confirms it reports the new version, then removes the backup and empties the download cache |
 
 **Show details** opens a log of everything it did, and **Copy log** puts it on
-the clipboard — that is what to attach to a bug report if an update goes wrong.
+the clipboard; that is what to attach to a bug report if an update goes wrong.
 
 **Nothing is left behind.** Every release carries a list of the files it
 installs, so an update knows exactly what the version it is replacing put on
 disk. Files the new release no longer ships are deleted, folders it dropped go
 with them, stale compiled bytecode is cleared, and when it is over the backup
-and the download are removed too — the project folder holds the new version and
+and the download are removed too; the project folder holds the new version and
 nothing else. Files *you* keep in the folder are never touched: they are not on
 any release's list, and the updater only removes what it recognises as its own.
 
@@ -422,24 +487,24 @@ There is a free-space check before anything is downloaded, so a full disk stops
 the update rather than interrupting it half way.
 
 LinRAR is not restarted for you. When the update is in, it offers **Restart
-LinRAR**; until you take it, the copy you are using is still the old one — and
+LinRAR**; until you take it, the copy you are using is still the old one, and
 LinRAR says so rather than pretending otherwise. While a restart is pending,
-the About box, **Settings → Updates** and the status bar all read something
-like *"2.0.0 — 2.1.0 is installed, restart to use it"*, and checking for
+the About box, **Settings > Updates** and the status bar all read something
+like *"2.0.0; 2.1.0 is installed, restart to use it"*, and checking for
 updates again will not re-offer the release you have just installed.
 
 ### Automatic updates
 
-**Options → Settings → General → Updates**, all off until you turn them on:
+**Options > Settings > General > Updates**, all off until you turn them on:
 
 | Setting | What it does |
 |---|---|
 | **Check for updates when LinRAR starts** | a quiet check a couple of seconds after the window opens. Nothing appears unless there is an update; if the server cannot be reached, nothing appears at all |
-| **Download and install them automatically** | when a check finds one, it is installed without being asked first. The window still appears and still shows every stage — "automatic" means without being asked, not without being told |
+| **Download and install them automatically** | when a check finds one, it is installed without being asked first. The window still appears and still shows every stage; "automatic" means without being asked, not without being told |
 | **Include pre-release versions** | offers `2.1.0-rc.1` and friends. Off by default: a pre-release ranks below the release it leads to and is never offered by accident |
 
 A start-up check goes to the network at most once an hour, however many times
-you open LinRAR in between — opening an archive from your file manager should
+you open LinRAR in between, opening an archive from your file manager should
 not mean an HTTP request every time.
 
 **Skip this version** puts a single version aside; it is never offered again,
@@ -451,14 +516,14 @@ LinRAR refuses to overwrite a copy that is not its to overwrite, and says which
 of these it is:
 
 - **A source checkout.** A clone carries a version number, but nobody published
-  it — update it with `git pull`.
+  it: update it with `git pull`.
 - **A folder it cannot write to**, which usually means a distribution package.
   Update it the way the rest of the system is updated.
 - **A system-wide install** (`./install.sh --system`) on a session with no way
   to become an administrator. The command to run by hand is shown.
 
 Administrators can settle the question for a whole machine by locking the
-`update/` keys — see [Settings for every user](#settings-for-every-user).
+`update/` keys: see [Settings for every user](#settings-for-every-user).
 
 ## Where your settings live
 
@@ -468,11 +533,12 @@ One readable file:
 ~/.config/LinRAR/linrar.conf
 ```
 
-It holds the theme, toolbar contents and style, view mode, row height, sort
+It holds the theme (a built-in one, or an installed theme's id), toolbar
+contents and style, view mode, row height, sort
 order, layout, window and splitter geometry, column widths, the compression
 settings of the last archive you made, the extraction options you last used,
 the find mask, favourites, folder history, saved profiles and password
-metadata. **Settings → Tools and system → Reset all settings** clears it.
+metadata. **Settings > Tools and system > Reset all settings** clears it.
 
 ## Settings for every user
 
@@ -484,7 +550,7 @@ one overriding the one before:
 /etc/xdg/LinRAR/linrar.conf      any $XDG_CONFIG_DIRS entry
 /etc/linrar/linrar.conf          the machine's own settings
 /etc/linrar/conf.d/*.conf        drop-ins, in name order
-~/.config/LinRAR/linrar.conf     each user's own choices — last word
+~/.config/LinRAR/linrar.conf     each user's own choices: last word
 ```
 
 `./install.sh --system` writes `/etc/linrar/linrar.conf` with every setting
@@ -493,7 +559,7 @@ commented out; `--global-config` adds it to a user install, and
 It is never overwritten once it exists.
 
 The format is the same INI the user's file uses. **Comments start with a
-semicolon** — a `#` is an ordinary character to the parser, so `#theme=light`
+semicolon**; a `#` is an ordinary character to the parser, so `#theme=light`
 would be read as a setting named `#theme` (LinRAR ignores keys like that, but
 your setting would silently not apply):
 
@@ -515,7 +581,7 @@ locked=view/theme, paths/*
 Everything outside `[policy]` is a **default**: the user can still change it,
 and their choice wins. `locked` makes a key the administrator's: LinRAR keeps
 the value set here, ignores whatever is in the user's file, greys the control
-out wherever it appears — menu entry, Settings dialog, Customize dialog — with
+out wherever it appears, menu entry, Settings dialog, Customize dialog, with
 a tooltip naming the file, and leaves the key alone when the user saves. A key
 is its section and name joined by a slash, shell wildcards work, and
 `lock_all=true` locks every key the file sets without naming them twice.
@@ -531,6 +597,6 @@ linrar --config-info
 ```
 
 It lists the files in play, the locked keys, every effective value, and whether
-each came from the user, the system, or the built-in default. **Settings →
+each came from the user, the system, or the built-in default. **Settings >
 Tools and system** shows the same thing in the application, under *Saved
 settings*.

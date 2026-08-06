@@ -8,7 +8,7 @@ that takes no options at all -- so they get two dialogs rather than one with
 half of it greyed out:
 
 :class:`SfxKindDialog`
-    Which of the two, with the difference explained.  Only *Commands → Convert
+    Which of the two, with the difference explained.  Only *Commands > Convert
     archive to SFX* needs it; the Add dialog already has the choice on its own
     form.
 :class:`SfxDialog`
@@ -94,12 +94,12 @@ class SfxKindDialog(QDialog):
         appimage_button.setDefault(True)
         appimage_button.clicked.connect(lambda: self._choose(APPIMAGE))
         appimage_text = QLabel(
-            "One executable file that unpacks itself when run — the Linux "
+            "One executable file that unpacks itself when run: the Linux "
             "equivalent of WinRAR's self-extracting <code>.exe</code>. "
             "Configurable: destination, licence, icon, and what runs "
             "afterwards.<br>"
             f"<span style='color:{'' if ready else '#B00020'}'>"
-            f"Architecture: {runtime_arch()} · {note}</span>"
+            f"Architecture: {runtime_arch()} - {note}</span>"
         )
         appimage_text.setWordWrap(True)
         appimage_text.setObjectName("Hint")
@@ -209,7 +209,7 @@ class SfxDialog(QDialog):
         box.setSpacing(3)
 
         summary = QLabel(
-            "One executable file that unpacks itself when run — the Linux "
+            "One executable file that unpacks itself when run: the Linux "
             "equivalent of WinRAR's self-extracting <code>.exe</code>."
         )
         summary.setWordWrap(True)
@@ -219,7 +219,7 @@ class SfxDialog(QDialog):
         # Qt only treats a label as rich text when it contains a tag, so plain
         # entities like &nbsp; would show up literally.
         self.state_label = QLabel(
-            f"<span>Architecture: {runtime_arch()} &nbsp;•&nbsp; </span>"
+            f"<span>Architecture: {runtime_arch()} &nbsp;-&nbsp; </span>"
             + (
                 note
                 if ready

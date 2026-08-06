@@ -104,8 +104,8 @@ class SearchResult:
         """Only the files the text was actually found in.
 
         Kept apart from :attr:`names` because a file that could not be read is
-        listed — silently dropping it would turn "I could not look" into "it
-        is not there" — but it must never be counted as a result.
+        listed (silently dropping it would turn "I could not look" into "it
+        is not there"), but it must never be counted as a result.
         """
         return [
             name for name in self.names
@@ -122,7 +122,14 @@ _ENCODINGS = ("utf-8", "utf-16-le", "utf-16-be", "latin-1")
 
 
 def _needles(text: str, case_sensitive: bool) -> list[bytes]:
-    """The byte forms of *text* worth scanning a file for."""
+    """The byte forms of *text* worth scanning a file for.
+
+    Both spellings are kept for a case-insensitive search, not just the
+    lower-cased one.  ``bytes.lower()`` folds ASCII and nothing else, so the
+    scan below cannot bring an upper-case "A" and a lower-case "a" together
+    outside ASCII: searching for "STRASSE" in a file that wrote "Straße" has
+    to have both encodings to look for.
+    """
     variants = [text] if case_sensitive else [text.lower(), text.upper(), text]
     out: list[bytes] = []
     for variant in dict.fromkeys(variants):
@@ -143,7 +150,16 @@ def _contains(path: str, needles: list[bytes], case_sensitive: bool) -> bool:
     found, and lower-cased per chunk for a case-insensitive search so an
     ASCII needle matches whatever case the file used.
     """
-    overlap = max((len(n) for n in needles), default=1)
+    if not needles:
+        return False
+    # The probes are folded and de-duplicated once here.  Doing it inside the
+    # loop, as this used to, re-derived the same handful of byte strings for
+    # every needle of every chunk of every file the mask matched.
+    probes = (
+        list(needles) if case_sensitive
+        else list(dict.fromkeys(needle.lower() for needle in needles))
+    )
+    overlap = max(len(probe) for probe in probes)
     tail = b""
     try:
         with open(path, "rb") as handle:
@@ -153,8 +169,7 @@ def _contains(path: str, needles: list[bytes], case_sensitive: bool) -> bool:
                     return False
                 window = tail + chunk
                 haystack = window if case_sensitive else window.lower()
-                for needle in needles:
-                    probe = needle if case_sensitive else needle.lower()
+                for probe in probes:
                     if probe in haystack:
                         return True
                 tail = window[-overlap:]
@@ -177,7 +192,7 @@ def _lines_in(path: str, text: str, case_sensitive: bool) -> list[tuple[int, str
         if needle in subject:
             trimmed = line.strip()
             if len(trimmed) > LINE_LIMIT:
-                trimmed = trimmed[:LINE_LIMIT] + "…"
+                trimmed = trimmed[:LINE_LIMIT] + "..."
             hits.append((number, trimmed))
     return hits
 
@@ -218,7 +233,7 @@ def search_folder(
     query: SearchQuery,
     ctx: Optional[TaskContext] = None,
 ) -> SearchResult:
-    """Find files under *folder* whose name — and optionally text — match."""
+    """Find files under *folder* whose name, and optionally text, match."""
     ctx = ctx or TaskContext()
     result = SearchResult()
     show_hidden_prefix = query.mask.startswith(".")
@@ -273,7 +288,7 @@ def search_archive(
     ctx: Optional[TaskContext] = None,
     extract: Optional[Callable] = None,
 ) -> SearchResult:
-    """Find members of an archive whose name — and optionally text — match.
+    """Find members of an archive whose name, and optionally text, match.
 
     *extract* is only for the tests: it stands in for ``backend.extract`` so
     the search can be exercised without a real archive tool.
@@ -304,12 +319,13 @@ def search_archive(
         )
         (extract or backend.extract)(archive_path, options, ctx)
 
+        index = _index_by_basename(workdir)
         for entry in candidates:
             if ctx.cancelled:
                 result.cancelled = True
                 return result
             ctx.on_file(entry.name)
-            path = _locate(workdir, entry.name)
+            path = _locate(workdir, entry.name, index)
             if path is None:
                 result.matches.append(
                     Match(name=entry.name, skipped="could not be unpacked")
@@ -327,13 +343,29 @@ def search_archive(
     return result
 
 
-def _locate(workdir: str, member: str) -> Optional[str]:
+def _index_by_basename(workdir: str) -> dict[str, str]:
+    """base name -> where it landed, built in one walk of the scratch folder.
+
+    The fallback below used to walk the whole tree once per member that had
+    not kept its path, which on a flattened archive of a few thousand files
+    was a few thousand walks of a few thousand files.  One walk answers them
+    all.  The first of two files sharing a base name wins, which is what a
+    per-member search would also have found.
+    """
+    index: dict[str, str] = {}
+    for root, _dirs, names in os.walk(workdir):
+        for name in names:
+            index.setdefault(name, os.path.join(root, name))
+    return index
+
+
+def _locate(
+    workdir: str, member: str, index: Optional[dict[str, str]] = None
+) -> Optional[str]:
     """Where a member landed, whether or not its path survived extraction."""
     direct = os.path.join(workdir, member)
     if os.path.isfile(direct):
         return direct
-    base = member.rsplit("/", 1)[-1]
-    for root, _dirs, names in os.walk(workdir):
-        if base in names:
-            return os.path.join(root, base)
-    return None
+    if index is None:
+        index = _index_by_basename(workdir)
+    return index.get(member.rsplit("/", 1)[-1])

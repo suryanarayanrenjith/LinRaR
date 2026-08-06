@@ -17,13 +17,28 @@ twisties) are therefore painted here into PNGs in the cache directory and fed
 back to the style sheet, tinted to match the active theme.  If that cache
 cannot be written we simply leave those sub-controls unstyled so the Fusion
 style keeps drawing them.
+
+Beyond the two built-ins there are **theme packs**: the same :class:`Colors`
+record filled in from a file the user installed.  :mod:`linrar.core.themes`
+finds and validates those files; this module turns one into a live theme, which
+is why a pack can restyle everything a built-in can -- every surface, every
+edge, the corner radii, the font, plus a block of style sheet of its own -- and
+why :mod:`linrar.ui.icons` gets a matching build so the glyphs change with the
+chrome rather than sitting on it.
+
+A theme is therefore named by one of three things everywhere in the program:
+``"light"``, ``"dark"``, or a pack id.  :func:`resolve` maps anything at all
+onto one of those, :func:`colors_for` produces the record, and :func:`mode`
+still answers the narrower question the icon set and the labels ask -- is this
+theme a light one or a dark one.
 """
 
 from __future__ import annotations
 
 import os
+import stat
 import tempfile
-from dataclasses import dataclass
+from dataclasses import dataclass, fields, replace
 
 from PyQt6.QtCore import QPointF, QRectF, QStandardPaths, Qt
 from PyQt6.QtGui import (
@@ -44,7 +59,14 @@ MODE_LABELS = {LIGHT: "Light", DARK: "Dark"}
 
 @dataclass(frozen=True)
 class Colors:
-    """Every colour the chrome needs, for one theme."""
+    """Every colour the chrome needs, for one theme.
+
+    ``mode`` names the theme -- ``"light"``, ``"dark"``, or a pack's id -- and
+    doubles as the key its painted glyphs are cached under, so two themes can
+    never trade artwork.  The fields after ``splitter_hot`` all have defaults:
+    they are what a theme pack may set beyond colour, and leaving them alone
+    keeps the built-in chrome exactly as it was.
+    """
 
     mode: str
 
@@ -155,6 +177,31 @@ class Colors:
     info: str
 
     splitter_hot: str
+
+    # -- shape and type, which a theme pack may also change ------------------
+    #: ``"light"`` or ``"dark"``: which of the two this theme counts as, for
+    #: the icon build and for the wording of the switch.  Empty on the
+    #: built-ins, where ``mode`` already says it.  (Not called ``base``: that
+    #: is taken, and it is the colour a list pane is painted.)
+    variant: str = ""
+    #: What the theme calls itself.  Empty on the built-ins; :data:`MODE_LABELS`
+    #: has those.
+    label: str = ""
+    #: Corner radii, in pixels.  Sunken controls (inputs, combos, the progress
+    #: trough) use ``radius``; raised ones (buttons, toolbar buttons, menu
+    #: rows, tabs, group boxes) use ``button_radius``; the panels a dialog is
+    #: built out of use ``card_radius``.  Zero everywhere gives the hard square
+    #: corners of a Windows-95 look; eight gives a modern rounded one.
+    radius: int = 2
+    button_radius: int = 3
+    card_radius: int = 4
+    #: Empty means "whatever the desktop uses", which is the right default: a
+    #: theme naming a font nobody has installed would silently get a
+    #: substitute.
+    font_family: str = ""
+    font_size: str = "9pt"
+    #: A pack's own style sheet, appended last so it wins over everything here.
+    extra_qss: str = ""
 
 
 LIGHT_COLORS = Colors(
@@ -345,13 +392,27 @@ _BOX = 13                          # check box / radio side
 
 
 def _cache_dir(mode: str) -> str:
+    """Where this theme's painted glyphs live, created private to this user.
+
+    The fallback used to be a fixed name under the shared temporary directory,
+    which anybody on the machine can create first: whoever got there could
+    have had LinRAR write its artwork wherever they liked, or read it back
+    with a directory of their own.  The name now carries the user id and the
+    tree is made 0700, and a path already owned by somebody else is refused
+    rather than used.
+    """
     base = QStandardPaths.writableLocation(
         QStandardPaths.StandardLocation.CacheLocation
     )
     if not base:
-        base = os.path.join(tempfile.gettempdir(), "linrar-cache")
+        base = os.path.join(
+            tempfile.gettempdir(), f"linrar-cache-{os.getuid()}"
+        )
     path = os.path.join(base, "chrome", mode)
-    os.makedirs(path, exist_ok=True)
+    os.makedirs(path, mode=0o700, exist_ok=True)
+    info = os.lstat(path)
+    if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid():
+        raise OSError(f"{path} is not this user's to write in")
     return path
 
 
@@ -442,12 +503,54 @@ def _indicator(
     return image
 
 
+#: The colours the painted glyphs are actually drawn with.  Only these decide
+#: whether the PNGs on disk are still the right ones, so a theme that differs
+#: from the last one only in, say, its selection gradient does not repaint
+#: thirty-eight files to produce thirty-eight identical files.
+_ARTWORK_FIELDS = (
+    "arrow", "arrow_off", "arrow_hot", "twisty",
+    "window", "disabled", "row_hover", "focus_border",
+    "check_bg", "check_border", "check_mark", "text_dim",
+)
+
+#: mode -> (signature, art map), so a second apply() of the same theme costs
+#: nothing at all.  Switching back and forth between two themes, which the
+#: Theme Manager's preview does constantly, is then free after the first pass.
+_ART_CACHE: dict[str, tuple[str, dict[str, str]]] = {}
+
+
+def _artwork_signature(colors: Colors) -> str:
+    """What the painted glyphs depend on, as one comparable string."""
+    return "\x1f".join(str(getattr(colors, name, "")) for name in _ARTWORK_FIELDS)
+
+
+def forget_artwork() -> None:
+    """Drop the remembered glyph paths, so the next apply repaints them.
+
+    Only the Theme Manager needs this, after it has edited or reinstalled a
+    pack: the id stays the same while the colours behind it change.
+    """
+    _ART_CACHE.clear()
+
+
 def _artwork(colors: Colors) -> dict[str, str]:
     """Paint the theme's small parts and return ``name -> file path``.
 
     Every glyph is written twice, once at 1x and once as an ``@2x`` twin, so a
-    HiDPI screen can pick the sharper file.
+    HiDPI screen can pick the sharper file.  That is thirty-eight images and
+    seventy-six files, which used to be redrawn from scratch on every call:
+    at start-up, on every theme change, and once per step through the Theme
+    Manager's list.  The results are now remembered per theme and the files
+    are only rewritten when the colours behind them have actually moved.
     """
+    signature = _artwork_signature(colors)
+    remembered = _ART_CACHE.get(colors.mode)
+    if remembered is not None and remembered[0] == signature:
+        # The files may still have been swept out from under us; a cache
+        # directory is by definition something the system may empty.
+        if all(os.path.isfile(path) for path in remembered[1].values()):
+            return remembered[1]
+
     try:
         folder = _cache_dir(colors.mode)
         art: dict[str, str] = {}
@@ -493,9 +596,11 @@ def _artwork(colors: Colors) -> dict[str, str]:
                     ),
                 )
         save("check-part", lambda s: _indicator(colors, s, partial=True))
+        _ART_CACHE[colors.mode] = (signature, art)
         return art
     except OSError:
         # No writable cache: fall back to the Fusion style's own glyphs.
+        _ART_CACHE.pop(colors.mode, None)
         return {}
 
 
@@ -504,13 +609,17 @@ def _artwork(colors: Colors) -> dict[str, str]:
 
 def _base_sheet(c: Colors) -> str:
     """Everything that does not depend on the painted artwork."""
+    # A theme that names no font must not write "font-family:" at all: an empty
+    # value is not "inherit", it is a rule Qt has to resolve, and it resolves
+    # to something nobody chose.
+    face = f"\n    font-family: \"{c.font_family}\";" if c.font_family else ""
     return f"""
 QMainWindow, QDialog, QWizard {{
     background: {c.window};
 }}
 QWidget {{
     color: {c.text};
-    font-size: 9pt;
+    font-size: {c.font_size};{face}
 }}
 QWidget:disabled {{
     color: {c.disabled};
@@ -527,7 +636,7 @@ QMenuBar::item {{
     background: transparent;
     padding: 4px 10px;
     border: 1px solid transparent;
-    border-radius: 3px;
+    border-radius: {c.button_radius}px;
 }}
 QMenuBar::item:selected {{
     background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
@@ -549,7 +658,7 @@ QMenu {{
 QMenu::item {{
     padding: 5px 34px 5px 30px;
     border: 1px solid transparent;
-    border-radius: 3px;
+    border-radius: {c.button_radius}px;
 }}
 QMenu::item:selected {{
     background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
@@ -583,7 +692,7 @@ QToolBar#MainToolBar {{
 QToolBar#MainToolBar QToolButton {{
     background: transparent;
     border: 1px solid transparent;
-    border-radius: 3px;
+    border-radius: {c.button_radius}px;
     padding: 3px 4px 2px 4px;
     margin: 0px 1px;
     min-width: 46px;
@@ -627,7 +736,7 @@ QToolBar#MainToolBar QToolButton#DependencyAlertButton:hover {{
 QMenuBar QToolButton#CornerButton {{
     background: transparent;
     border: 1px solid transparent;
-    border-radius: 3px;
+    border-radius: {c.button_radius}px;
     margin: 1px 4px 1px 1px;
     padding: 2px;
 }}
@@ -656,7 +765,7 @@ QWidget#AddressBar {{
 QWidget#AddressBar QToolButton {{
     background: transparent;
     border: 1px solid transparent;
-    border-radius: 3px;
+    border-radius: {c.button_radius}px;
     padding: 2px;
 }}
 QWidget#AddressBar QToolButton:hover {{
@@ -677,7 +786,7 @@ QLabel#AddressLabel {{
 QComboBox {{
     background: {c.base};
     border: 1px solid {c.frame};
-    border-radius: 2px;
+    border-radius: {c.radius}px;
     padding: 2px 4px;
     min-height: 20px;
     color: {c.text};
@@ -700,8 +809,8 @@ QComboBox::drop-down {{
     subcontrol-position: top right;
     width: 18px;
     border-left: 1px solid {c.border};
-    border-top-right-radius: 2px;
-    border-bottom-right-radius: 2px;
+    border-top-right-radius: {c.radius}px;
+    border-bottom-right-radius: {c.radius}px;
     background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
                 stop:0 {c.btn_top}, stop:0.5 {c.btn_upper}, stop:1 {c.btn_bottom});
 }}
@@ -809,7 +918,7 @@ QLabel#StatusPane {{
 QToolButton#StatusButton {{
     background: transparent;
     border: 1px solid transparent;
-    border-radius: 3px;
+    border-radius: {c.button_radius}px;
     padding: 2px;
     margin: 0px 1px;
 }}
@@ -829,7 +938,7 @@ QPushButton {{
                 stop:0 {c.btn_top}, stop:0.45 {c.btn_upper}, stop:0.46 {c.btn_lower},
                 stop:1 {c.btn_bottom});
     border: 1px solid {c.btn_border};
-    border-radius: 3px;
+    border-radius: {c.button_radius}px;
     padding: 4px 15px;
     min-width: 76px;
     min-height: 18px;
@@ -875,7 +984,7 @@ QGroupBox {{
     border: 1px solid {c.group_border};
     border-top-color: {c.shadow};
     border-left-color: {c.shadow};
-    border-radius: 3px;
+    border-radius: {c.button_radius}px;
     margin-top: 11px;
     padding: 10px 8px 8px 8px;
     background: transparent;
@@ -900,8 +1009,8 @@ QTabBar::tab {{
                 stop:0 {c.tab_top}, stop:0.5 {c.tab_mid}, stop:1 {c.tab_bottom});
     border: 1px solid {c.shadow};
     border-bottom: none;
-    border-top-left-radius: 3px;
-    border-top-right-radius: 3px;
+    border-top-left-radius: {c.button_radius}px;
+    border-top-right-radius: {c.button_radius}px;
     padding: 5px 14px;
     margin-right: 2px;
     color: {c.text};
@@ -928,7 +1037,7 @@ QLineEdit, QTextEdit, QPlainTextEdit, QSpinBox, QDoubleSpinBox,
 QAbstractSpinBox, QTextBrowser {{
     background: {c.base};
     border: 1px solid {c.frame};
-    border-radius: 2px;
+    border-radius: {c.radius}px;
     padding: 3px 4px;
     color: {c.text};
     selection-background-color: {c.sel_bottom};
@@ -952,7 +1061,7 @@ QLineEdit:read-only {{
 QProgressBar {{
     background: {c.prog_bg};
     border: 1px solid {c.frame};
-    border-radius: 2px;
+    border-radius: {c.radius}px;
     text-align: center;
     height: 18px;
     color: {c.text};
@@ -1024,7 +1133,7 @@ QWidget#Rule {{
 QWidget#Card, QLabel#Card {{
     background: {c.alt_base};
     border: 1px solid {c.frame};
-    border-radius: 4px;
+    border-radius: {c.card_radius}px;
     padding: 10px;
 }}
 """
@@ -1122,7 +1231,7 @@ QToolBar QToolButton#qt_toolbar_ext_button {{
     background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
                 stop:0 {c.bar_mid}, stop:1 {c.bar_bottom});
     border: 1px solid {c.border};
-    border-radius: 3px;
+    border-radius: {c.button_radius}px;
     min-width: 16px;
     max-width: 20px;
     margin: 3px 1px;
@@ -1243,7 +1352,7 @@ QScrollBar::handle:vertical {{
     background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
                 stop:0 {c.sb_top}, stop:1 {c.sb_bottom});
     border: 1px solid {c.sb_border};
-    border-radius: 2px;
+    border-radius: {c.radius}px;
     min-height: 28px;
     margin: -1px;
 }}
@@ -1251,7 +1360,7 @@ QScrollBar::handle:horizontal {{
     background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
                 stop:0 {c.sb_top}, stop:1 {c.sb_bottom});
     border: 1px solid {c.sb_border};
-    border-radius: 2px;
+    border-radius: {c.radius}px;
     min-width: 28px;
     margin: -1px;
 }}
@@ -1300,7 +1409,14 @@ QScrollBar::sub-line:disabled {{
 
 def stylesheet(colors: Colors, art: dict[str, str] | None = None) -> str:
     art = _artwork(colors) if art is None else art
-    return _base_sheet(colors) + _chrome_sheet(colors, art)
+    sheet = _base_sheet(colors) + _chrome_sheet(colors, art)
+    if colors.extra_qss:
+        # Last, so a pack's own rules override the ones built above rather than
+        # being overridden by them -- which is the only useful order, since the
+        # rules above cover everything and would otherwise always win.
+        sheet += "\n/* ================= theme pack ================= */\n"
+        sheet += colors.extra_qss + "\n"
+    return sheet
 
 
 # ---------------------------------------------------------------- palette
@@ -1344,10 +1460,199 @@ def qt_palette(c: Colors) -> QPalette:
     return palette
 
 
+# ---------------------------------------------------------------- theme packs
+
+#: What a manifest's ``metrics`` map may set.
+METRIC_FIELDS = ("radius", "button_radius", "card_radius")
+
+#: Every :class:`Colors` field a manifest's ``colors`` map may set.  ``mode`` is
+#: the pack's id and ``variant`` comes from ``"base"``, so neither is the
+#: manifest's to write; the metrics have a map of their own, and a radius
+#: written among the colours is a mistake worth naming rather than ignoring.
+COLOR_FIELDS = frozenset(f.name for f in fields(Colors)) - {
+    "mode", "variant", "label", "extra_qss", "font_family", "font_size",
+    *METRIC_FIELDS,
+}
+
+#: pack id -> the theme it resolves to.
+_PACKS: dict[str, Colors] = {}
+#: pack id -> the loader's record, for the manager's details pane.
+_PACK_INFO: dict[str, object] = {}
+_SCANNED = False
+
+
+def _pack_colors(pack) -> Colors:
+    """Fold one :class:`~linrar.core.themes.ThemePack` onto its base palette.
+
+    Everything the manifest did not mention keeps the built-in value.  That is
+    what makes a partial theme safe: the worst a three-line manifest can do is
+    look like the built-in it started from.
+
+    This is also where a name nobody recognises is caught, because this module
+    is what owns the list of names -- the loader deliberately does not know
+    them, so that validating a file never means importing Qt.
+    """
+    from ..core import themes as loader
+
+    for name in sorted(set(pack.colors) - COLOR_FIELDS):
+        # A radius written among the colours is the common one, and it has a
+        # better answer than "no such colour".
+        if name in METRIC_FIELDS:
+            pack.problems.append(loader.Problem(
+                where=f"colors.{name}",
+                found=loader._quote(pack.colors[name]),
+                expected=f'"{name}" under "metrics", as a number of pixels',
+                fix=f'move it:  "metrics": {{ "{name}": 4 }}; the radii are '
+                    "sizes, not colours.",
+            ))
+            continue
+        pack.problems.append(loader.unknown_key_problem(
+            "colors", name, COLOR_FIELDS, "the chrome is built from"
+        ))
+    values = {k: v for k, v in pack.colors.items() if k in COLOR_FIELDS}
+
+    for name in sorted(set(pack.metrics) - set(METRIC_FIELDS)):
+        pack.problems.append(loader.unknown_key_problem(
+            "metrics", name, METRIC_FIELDS, "a theme can size"
+        ))
+    values.update(
+        {k: v for k, v in pack.metrics.items() if k in METRIC_FIELDS}
+    )
+
+    variant = normalize(pack.base)
+    if pack.font_family:
+        values["font_family"] = pack.font_family
+    if pack.font_size:
+        values["font_size"] = pack.font_size
+    return replace(
+        PALETTES[variant],
+        mode=pack.id,
+        variant=variant,
+        label=pack.label,
+        extra_qss=pack.stylesheet,
+        **values,
+    )
+
+
+def _icon_style(pack) -> str:
+    """The pack's ``icon_style``, checked against the styles that exist.
+
+    Validated here rather than in the loader for the same reason the colour
+    names are: the list belongs to :mod:`linrar.ui.icons`, and reading a theme
+    file must never mean importing Qt.
+    """
+    from ..core import themes as loader
+    from . import icons
+
+    wanted = pack.icon_style
+    if not wanted:
+        return "gloss"
+    if wanted in icons.STYLES:
+        return wanted
+    pack.problems.append(loader.Problem(
+        where='"icon_style"', found=loader._quote(wanted),
+        expected="one of " + ", ".join(f'"{s}"' for s in icons.STYLES),
+        fix='"gloss" is the built-in 3D look, "flat" has no gradients or '
+            'shadows at all, "neon" lights the glyphs from inside, "soft" is '
+            'gloss with the shine taken down. Try  "icon_style": "flat".',
+    ))
+    return "gloss"
+
+
+def packs(rescan: bool = False) -> dict[str, Colors]:
+    """Every installed theme pack, loaded once and kept."""
+    global _SCANNED
+    if _SCANNED and not rescan:
+        return _PACKS
+
+    from ..core import themes as loader
+    from . import icons
+
+    found = loader.reload() if rescan else loader.discover()
+    _PACKS.clear()
+    _PACK_INFO.clear()
+    icons.forget_builds()
+    # A pack keeps its id when it is edited or reinstalled, so the glyphs
+    # remembered under that id may no longer be the ones it asks for.
+    forget_artwork()
+    for pack_id, pack in found.items():
+        try:
+            colors = _pack_colors(pack)
+        except (TypeError, ValueError) as error:   # pragma: no cover - defensive
+            pack.problems.append(f"could not be applied: {error}")
+            continue
+        # The icon set gets its own build under the same id, so switching theme
+        # switches the glyphs in the same breath.
+        icons.register_build(
+            pack_id, pack.base, pack.ink, pack.icon_svg, pack.problems,
+            style=_icon_style(pack),
+        )
+        _PACKS[pack_id] = colors
+        _PACK_INFO[pack_id] = pack
+    _SCANNED = True
+    return _PACKS
+
+
+def reload_packs() -> dict[str, Colors]:
+    """Look at the theme directories again, after an install or an edit."""
+    return packs(rescan=True)
+
+
+def pack(name: str) -> object | None:
+    """The loader's record for a pack id, or ``None`` for a built-in."""
+    packs()
+    return _PACK_INFO.get(str(name or ""))
+
+
+def available() -> list[str]:
+    """Every theme that can be selected: the two built-ins, then the packs."""
+    return list(MODES) + list(packs())
+
+
+def resolve(name: str | None) -> str:
+    """Map anything at all onto a theme that exists.
+
+    Unlike :func:`normalize` this knows about packs, so it is what the settings
+    file and the menus go through.  A pack that has been uninstalled resolves
+    back to the light theme rather than to nothing.
+    """
+    text = str(name or "").strip()
+    if text in MODES:
+        return text
+    if text and text in packs():
+        return text
+    return normalize(text)
+
+
+def colors_for(name: str | None) -> Colors:
+    """The :class:`Colors` a theme name stands for."""
+    resolved = resolve(name)
+    return PALETTES.get(resolved) or _PACKS.get(resolved) or LIGHT_COLORS
+
+
+def label(name: str | None) -> str:
+    """What to call a theme in a menu, a message or a combo box."""
+    resolved = resolve(name)
+    if resolved in MODE_LABELS:
+        return MODE_LABELS[resolved]
+    info = _PACK_INFO.get(resolved)
+    return getattr(info, "label", resolved)
+
+
+def variant_of(colors: Colors) -> str:
+    """Is this theme a light one or a dark one?"""
+    return normalize(colors.variant or colors.mode)
+
+
+def is_pack(name: str | None) -> bool:
+    return resolve(name) not in MODES
+
+
 # ---------------------------------------------------------------- entry point
 
 _mode = LIGHT
 _colors = LIGHT_COLORS
+_theme = LIGHT
 
 
 def current() -> Colors:
@@ -1356,12 +1661,23 @@ def current() -> Colors:
 
 
 def mode() -> str:
+    """Whether the theme in force is a light one or a dark one.
+
+    Not the same question as :func:`active`: a pack called "midnight-neon" is
+    in force *and* is a dark theme, and the icon set and the wording of the
+    switch care only about the second.
+    """
     return _mode
+
+
+def active() -> str:
+    """The name of the theme in force: a built-in mode, or a pack id."""
+    return _theme
 
 
 def apply(app, requested: str | None = None) -> str:
     """Install the LinRAR look on *app* and return the theme that was used."""
-    global _mode, _colors
+    global _mode, _colors, _theme
 
     if requested is None:
         try:                                  # avoid a circular import at load
@@ -1371,17 +1687,18 @@ def apply(app, requested: str | None = None) -> str:
         except Exception:                     # pragma: no cover - defensive
             requested = LIGHT
 
-    _mode = normalize(requested)
-    _colors = PALETTES[_mode]
+    _theme = resolve(requested)
+    _colors = colors_for(_theme)
+    _mode = variant_of(_colors)
 
     # The icon set follows the chrome, so glyphs never sit on a hostile
     # background.
     from . import icons
 
-    icons.set_theme(_mode)
+    icons.set_theme(_theme if _theme in _PACKS else _mode)
 
     app.setStyle("Fusion")
     app.setPalette(qt_palette(_colors))
     app.setStyleSheet(stylesheet(_colors))
     app.setWindowIcon(icons.icon("app"))
-    return _mode
+    return _theme
