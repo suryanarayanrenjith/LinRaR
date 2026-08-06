@@ -35,11 +35,11 @@ natively on your desktop.
 <table>
 <tr>
 <td width="50%"><img src="docs/images/main-light.png" alt="LinRAR in the light theme"></td>
-<td width="50%"><img src="docs/images/main-themed.png" alt="LinRAR in the Midnight Neon theme"></td>
+<td width="50%"><img src="docs/images/main-dark.png" alt="LinRAR in the dark theme"></td>
 </tr>
 <tr>
 <td align="center"><em>The light theme, drawn into LinRAR itself</em></td>
-<td align="center"><em>Midnight Neon, one of ten you can download</em></td>
+<td align="center"><em>The dark theme, the other one it ships with</em></td>
 </tr>
 </table>
 
